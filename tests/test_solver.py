@@ -1,4 +1,5 @@
 import pytest
+from matplotlib import pyplot as plt
 from test_utils import MockAgent
 
 from flatland_blackbox.solvers.cbs import CBSSolver
@@ -53,7 +54,7 @@ def test_two_agents_cross(two_by_two_cross_graph, solver_cls):
 
 
 @pytest.mark.parametrize("solver_cls", [PrioritizedPlanningSolver, CBSSolver])
-def test_passing_node_scenario(passing_node_graph, solver_cls, vanish_at_goal=True):
+def test_passing_node_scenario(passing_node_graph, solver_cls, disappear_at_goal=False):
     """
     Scenario:
 
@@ -78,15 +79,15 @@ def test_passing_node_scenario(passing_node_graph, solver_cls, vanish_at_goal=Tr
         )  # or .schedule_agents_in_order(agents) if PP uses that
     except ValueError as e:
         # If no solution found, we can check if it's the PP solver that fails
-        if solver_cls is PrioritizedPlanningSolver:
+        if (solver_cls is PrioritizedPlanningSolver) and not disappear_at_goal:
             print("PP failed to find a solution (expected).")
             return  # test passes if PP fails
-        else:
+        elif solver_cls is CBSSolver:
             # If CBS fails, that's unexpected
             pytest.fail("CBS unexpectedly failed on passing node scenario.")
 
     # For PP, we expect no solution if trains remain at their goal position
-    if solver_cls is PrioritizedPlanningSolver and not vanish_at_goal:
+    if solver_cls is PrioritizedPlanningSolver and disappear_at_goal:
         pytest.fail(
             "PP found a solution, but was expected to fail if goals remain blocked."
         )
@@ -112,7 +113,7 @@ def test_two_trains_suboptimal_scenario(two_trains_suboptimal_graph, solver_cls)
     rail_subgraph = get_rail_subgraph(two_trains_suboptimal_graph)
     solver = solver_cls(rail_subgraph)
 
-    visualize_graph(rail_subgraph, "test_two_trains_suboptimal_scenario")
+    # visualize_graph(rail_subgraph, "test_two_trains_suboptimal_scenario")
 
     try:
         solution = solver.solve(agents)
@@ -156,6 +157,7 @@ def test_two_trains_suboptimal_scenario(two_trains_suboptimal_graph, solver_cls)
     assert (
         len(path1) == expected_len1
     ), f"Agent1 path length mismatch for {solver_cls.__name__}"
+
     assert flow_time == expected_flow, f"Flow time mismatch for {solver_cls.__name__}"
     assert makespan == expected_makespan, f"Makespan mismatch for {solver_cls.__name__}"
 

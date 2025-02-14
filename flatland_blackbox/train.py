@@ -169,7 +169,7 @@ def run_training():
     fig, axes = plt.subplots(1, 2, figsize=(8, 6))
     visualize_graph(G, "Original Weights", ax=axes[0])
     visualize_graph(H, "Updated Weights", ax=axes[1])
-    plt.show()
+    # plt.show()
 
 
 if __name__ == "__main__":

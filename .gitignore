@@ -36,3 +36,6 @@ pyrightconfig.json
 
 # Todos
 todos.txt
+
+# Outputs
+outputs/*

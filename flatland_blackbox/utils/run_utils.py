@@ -10,12 +10,14 @@ from flatland.utils import jupyter_utils
 from flatland.utils.rendertools import RenderTool
 
 
-def initialize_environment(seed=42, width=30, height=30, num_agents=2):
+def initialize_environment(
+    seed=42, width=30, height=30, num_agents=2, max_num_cities=3
+):
     env = RailEnv(
         width=width,
         height=height,
         rail_generator=sparse_rail_generator(
-            max_num_cities=3,
+            max_num_cities=max_num_cities,
             grid_mode=False,
             max_rails_between_cities=4,
             max_rail_pairs_in_city=2,
@@ -54,32 +56,7 @@ def execute_simulation(env, renderer, action_sequences):
     renderer.close_window()
 
 
-def get_agents_start_end(graph, agents):
-    list_starts = []
-    list_ends = []
-
-    for agent in agents:
-        start_grid = agent.initial_position
-        start_dir = agent.initial_direction
-        official_start_node = (*start_grid, start_dir)
-        official_start_node = tuple(int(element) for element in official_start_node)
-        list_starts.append(official_start_node)
-
-        # Potential end nodes are neighbors of the agent's target cell
-        end_dirs = [
-            n
-            for n in graph.neighbors(agent.target)
-            if graph.nodes[n].get("type") == "rail"
-        ]
-        list_ends.append(end_dirs)
-        # print(f"Possible end nodes for agent {agent.handle}: {end_dirs}")
-        # print(f"Departure-arrival timeframe: [{agent.earliest_departure}-{agent.latest_arrival}]")
-        # print("Speed counter value:", agent.speed_counter.max_count)
-
-    return list_starts, list_ends
-
-
-def plot_agent_subgraphs(env, G_paths_subgraphs, agents):
+def plot_agent_subgraphs(env, G_paths_subgraphs, agents, save_fig_folder=""):
     """
     Takes the environment, a list of subgraphs (one per agent),
     and the agents list, then does the jupyter canvas logic
@@ -106,4 +83,10 @@ def plot_agent_subgraphs(env, G_paths_subgraphs, agents):
             alpha_img=0.7,
         )
         plt.title(f"Agent {agents[i].handle} path")
-        plt.show()
+
+        if save_fig_folder:
+            plt.savefig(
+                f"{save_fig_folder}/path_agent_{agents[i].handle}.png", dpi="figure"
+            )
+        else:
+            plt.show()

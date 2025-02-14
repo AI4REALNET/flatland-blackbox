@@ -32,28 +32,11 @@ def test_learned_weights_suboptimal(two_trains_suboptimal_graph):
     # Run PP on updated weights
     final_pp_solution = pp_plan_dict(G_updated, agents)
 
-    # Basic checks
+    # Agents exist and final paths are not empty
     assert 0 in final_pp_solution and 1 in final_pp_solution
     path0 = final_pp_solution[0]
     path1 = final_pp_solution[1]
     assert len(path0) > 0 and len(path1) > 0
-
-    # Agents final node checks
-    agent0_end = path0[-1][0]
-    agent1_end = path1[-1][0]
-    assert (agent0_end.row, agent0_end.col) == (0, 1), "Agent0 not at (0,1)"
-    assert (agent1_end.row, agent1_end.col) == (4, 1), "Agent1 not at (4,1)"
-
-    # Compare final path lengths
-    expected_len0, expected_len1 = 8, 5
-    assert len(path0) == expected_len0, f"Agent0 path length mismatch"
-    assert len(path1) == expected_len1, f"Agent1 path length mismatch"
-
-    flow_time = len(path0) + len(path1)
-    makespan = max(len(path0), len(path1))
-    expected_flow, expected_makespan = 13, 8
-    assert flow_time == expected_flow, "Flow time mismatch"
-    assert makespan == expected_makespan, "Makespan mismatch"
 
     print("\n=== CBS Expert Plan (weights=1) ===")
     for ag, path in cbs_plan.items():
@@ -64,6 +47,21 @@ def test_learned_weights_suboptimal(two_trains_suboptimal_graph):
     for ag, path in enumerate([path0, path1]):
         coords = [(n.row, n.col) for n, _ in path]
         print(f"Agent{ag}, length={len(path)}, coords={coords}")
+
+    # Agents final node checks
+    agent0_end = path0[-1][0]
+    agent1_end = path1[-1][0]
+    assert (agent0_end.row, agent0_end.col) == (0, 1), "Agent0 not at (0,1)"
+    assert (agent1_end.row, agent1_end.col) == (4, 1), "Agent1 not at (4,1)"
+
+    # Compare final path lengths
+    assert len(path0) == 8, f"Agent0 path length mismatch"
+    assert len(path1) == 5, f"Agent1 path length mismatch"
+
+    flow_time = len(path0) + len(path1)
+    makespan = max(len(path0), len(path1))
+    assert flow_time == 13, "Flow time mismatch"
+    assert makespan == 8, "Makespan mismatch"
 
     # Visualize the final graph
     # fig, axes = plt.subplots(1, 2, figsize=(8,6))

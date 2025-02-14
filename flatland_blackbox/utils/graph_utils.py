@@ -22,20 +22,47 @@ def get_rail_subgraph(nx_graph):
     return nx_graph.edge_subgraph(rail_edges).copy()
 
 
+def preprocess_departure_times(sorted_agents):
+    """
+    Adjusts earliest departure times to prevent multiple agents
+    from starting at the same location & time.
+    """
+    start_times = {}  # Maps (row, col) -> latest assigned EDT
+
+    for agent in sorted_agents:
+        start_pos = agent.initial_position
+        current_edt = getattr(agent, "earliest_departure", 0)
+
+        # If this (row, col) already has an agent at the same time, shift the edt
+        while start_pos in start_times and start_times[start_pos] >= current_edt:
+            current_edt += 1  # Delay departure to avoid overlap
+
+        # Update the agent's earliest departure
+        agent.earliest_departure = current_edt
+        start_times[start_pos] = current_edt  # Record assigned time
+
+    return sorted_agents  # Return updated agents list
+
+
 def true_distance_heuristic(nx_graph, goal_node):
     """
-    Return a dict: node -> distance
-    Using a shortest-path approach on 'l' edge weight in nx_graph.
+    Returns a dict: node -> distance, where distance is the minimal cost
+    from each node *to* goal_node in the original directed graph.
+    We do so by reversing the graph and running a single Dijkstra from goal_node.
     """
+    # Reverse the graph so we can do a single source Dijkstra from goal_node
+    # to all other nodes in that reversed perspective,
+    # which corresponds to "from node to goal" in the original.
+    reversed_graph = nx.reverse(nx_graph, copy=True)
+
+    # Run Dijkstra in the reversed graph
+    dist_map = nx.single_source_dijkstra_path_length(
+        reversed_graph, goal_node, weight="l"
+    )
+
     dist = {}
     for node in nx_graph.nodes():
-        try:
-            d = nx.shortest_path_length(
-                nx_graph, source=node, target=goal_node, weight="l"
-            )
-            dist[node] = d
-        except nx.NetworkXNoPath:
-            dist[node] = float("inf")
+        dist[node] = dist_map.get(node, float("inf"))
 
     return dist
 
@@ -186,3 +213,31 @@ def visualize_graph_with_lengths(G, title="Graph (length ~ weight)"):
     plt.title(title)
     plt.axis("equal")
     plt.show()
+
+
+def check_no_collisions(paths):
+    """
+    paths: dict of agent_id -> list of (RailNode, timestep)
+    Example of paths:
+      {
+          0: [(RailNode(row=14, col=16, direction=-1), 0),
+              (RailNode(row=14, col=16, direction=3), 1),
+              ...],
+          1: [...],
+          ...
+      }
+    Raises AssertionError if two agents overlap in the same cell at the same time.
+    """
+    seen_positions = {}  # (row, col, t) -> agent_id
+
+    for agent_id, path in paths.items():
+        for node, t in path:
+            pos_time = (node.row, node.col, t)
+            if pos_time in seen_positions:
+                other_agent = seen_positions[pos_time]
+                raise AssertionError(
+                    f"Collision detected! Agent {agent_id} and agent {other_agent} "
+                    f"both at row={node.row}, col={node.col} at time={t}"
+                )
+
+            seen_positions[pos_time] = agent_id
