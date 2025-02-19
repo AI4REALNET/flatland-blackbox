@@ -54,7 +54,7 @@ def test_two_agents_cross(two_by_two_cross_graph, solver_cls):
 
 
 @pytest.mark.parametrize("solver_cls", [PrioritizedPlanningSolver, CBSSolver])
-def test_passing_node_scenario(passing_node_graph, solver_cls, disappear_at_goal=False):
+def test_passing_node_scenario(passing_node_graph, solver_cls, stay_at_goal=False):
     """
     Scenario:
 
@@ -79,7 +79,7 @@ def test_passing_node_scenario(passing_node_graph, solver_cls, disappear_at_goal
         )  # or .schedule_agents_in_order(agents) if PP uses that
     except ValueError as e:
         # If no solution found, we can check if it's the PP solver that fails
-        if (solver_cls is PrioritizedPlanningSolver) and not disappear_at_goal:
+        if (solver_cls is PrioritizedPlanningSolver) and stay_at_goal:
             print("PP failed to find a solution (expected).")
             return  # test passes if PP fails
         elif solver_cls is CBSSolver:
@@ -87,7 +87,7 @@ def test_passing_node_scenario(passing_node_graph, solver_cls, disappear_at_goal
             pytest.fail("CBS unexpectedly failed on passing node scenario.")
 
     # For PP, we expect no solution if trains remain at their goal position
-    if solver_cls is PrioritizedPlanningSolver and disappear_at_goal:
+    if solver_cls is PrioritizedPlanningSolver and stay_at_goal:
         pytest.fail(
             "PP found a solution, but was expected to fail if goals remain blocked."
         )
