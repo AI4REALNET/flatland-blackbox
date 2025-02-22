@@ -4,7 +4,7 @@ from test_utils import MockAgent
 
 from flatland_blackbox.solvers.cbs import CBSSolver
 from flatland_blackbox.solvers.pp import PrioritizedPlanningSolver
-from flatland_blackbox.utils.graph_utils import get_rail_subgraph, visualize_graph
+from flatland_blackbox.utils.graph_utils import get_rail_subgraph
 
 
 @pytest.mark.parametrize("solver_cls", [PrioritizedPlanningSolver, CBSSolver])
@@ -112,8 +112,6 @@ def test_two_trains_suboptimal_scenario(two_trains_suboptimal_graph, solver_cls)
 
     rail_subgraph = get_rail_subgraph(two_trains_suboptimal_graph)
     solver = solver_cls(rail_subgraph)
-
-    # visualize_graph(rail_subgraph, "test_two_trains_suboptimal_scenario")
 
     try:
         solution = solver.solve(agents)

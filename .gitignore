@@ -23,7 +23,7 @@ build/
 *.tmp
 
 # Notebooks
-notebooks/*
+/notebooks
 
 # Jupyter Notebook output
 *.nbconvert.ipynb

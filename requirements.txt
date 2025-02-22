@@ -1,12 +1,7 @@
-flatland-rl
 networkx
-ipykernel
-jupyter
-nb_conda_kernels
 pytest
 pytorch
 torchvision
 scipy
-black
-isort
-pre-commit
+tqdm
+flatland-rl==4.0.3
