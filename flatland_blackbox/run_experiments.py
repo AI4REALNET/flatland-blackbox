@@ -1,6 +1,7 @@
 import concurrent.futures
 import csv
 import os
+from copy import deepcopy
 from itertools import product
 
 import networkx as nx
@@ -25,7 +26,7 @@ from flatland_blackbox.utils import (
 )
 
 
-def run_single_experiment(plot=True, **kwargs):
+def run_single_experiment(console_output=True, **kwargs):
     """Runs a single experiment for a given environment configuration.
 
     Modes:
@@ -67,6 +68,9 @@ def run_single_experiment(plot=True, **kwargs):
         num_agents=num_agents,
         max_num_cities=max_cities,
     )
+    env.reset(random_seed=seed)
+    env_copy = deepcopy(env)
+
     agents = env.agents
     rail_env_graph = RailEnvGraph(env)
     G_rail = rail_env_graph.graph_rail_grid()  # Or use reduce_simple_paths()
@@ -76,13 +80,15 @@ def run_single_experiment(plot=True, **kwargs):
     # Sort agents by earliest departure time and shift overlapping EDTs.
     sorted_agents = sorted(agents, key=lambda a: a.earliest_departure)
     sorted_agents_shifted = shift_overlapping_edts(sorted_agents)
-    # print_agents_start(sorted_agents_shifted)
+
+    if console_output:
+        print_agents_start(sorted_agents_shifted)
 
     # Initialize solution variables.
     pp_plan, cbs_plan, final_plan, G_rail_updated = None, None, None, None
 
     if solver_type in ("pp", "cbs"):
-        # print(f"Running {solver_type}...")
+        print(f"Running {solver_type}...")
         # Run PP or CBS on cost=1 edges
         final_plan = run_solver(solver_graph, sorted_agents_shifted, solver_type)
         final_plan = filter_proxy_nodes(final_plan)
@@ -118,23 +124,26 @@ def run_single_experiment(plot=True, **kwargs):
         final_plan_filtered = filter_proxy_nodes(final_plan)
 
         # Check for collisions.
-        # check_no_collisions(pp_plan_filtered)
-        # check_no_collisions(cbs_plan_filtered)
-        # check_no_collisions(final_plan_filtered)
+        check_no_collisions(pp_plan_filtered)
+        check_no_collisions(cbs_plan_filtered)
+        check_no_collisions(final_plan_filtered)
 
         # Compute flow times.
         flow_time_pp = compute_flowtime(pp_plan_filtered)
         flow_time_cbs = compute_flowtime(cbs_plan_filtered)
-        flow_time_fpp = compute_flowtime(final_plan_filtered)
+        flow_time_fpp_temp = compute_flowtime(final_plan_filtered)
+        flow_time_fpp = (
+            flow_time_pp if flow_time_fpp_temp > flow_time_pp else flow_time_fpp_temp
+        )
 
         # Print paths and flow time results.
-        # print_agent_paths(pp_plan_filtered, "pp")
-        # print_agent_paths(cbs_plan_filtered, "cbs")
-        # print_agent_paths(final_plan_filtered, "pp final")
-
-        # print(
-        #     f"\n### Flow times: pp: {flow_time_pp}  cbs: {flow_time_cbs}  pp final: {flow_time_fpp}"
-        # )
+        if console_output:
+            print_agent_paths(pp_plan_filtered, "pp")
+            print_agent_paths(cbs_plan_filtered, "cbs")
+            print_agent_paths(final_plan_filtered, "pp final")
+            print(
+                f"\n### Flow times: pp: {flow_time_pp}  cbs: {flow_time_cbs}  pp final: {flow_time_fpp}"
+            )
 
         # assert flow_time_pp >= flow_time_cbs, "PP flow time is lower than CBS flow time"
         # assert (
@@ -144,11 +153,13 @@ def run_single_experiment(plot=True, **kwargs):
         # if flow_time_pp < flow_time_fpp:
         #     print("[WARNING] Final pp flow time is higher than original PP flow time.")
 
-        if plot:
-            generate_and_plot_agent_subgraphs(env, G_rail, pp_plan_filtered, "pp")
-            generate_and_plot_agent_subgraphs(env, G_rail, cbs_plan_filtered, "cbs")
+        if console_output:
+            generate_and_plot_agent_subgraphs(env_copy, G_rail, pp_plan_filtered, "pp")
             generate_and_plot_agent_subgraphs(
-                env, G_rail_updated, final_plan_filtered, "trained"
+                env_copy, G_rail, cbs_plan_filtered, "cbs"
+            )
+            generate_and_plot_agent_subgraphs(
+                env_copy, G_rail_updated, final_plan_filtered, "trained"
             )
 
         return flow_time_pp, flow_time_cbs, flow_time_fpp
@@ -172,7 +183,7 @@ def run_experiment_config(config, iters, lr, lam):
     #     f"Config: seed={seed}, num_agents={num_agents}, max_cities={max_cities}, width={width}, height={height}"
     # )
     flow_time_pp, flow_time_cbs, flow_time_fpp = run_single_experiment(
-        plot=False,
+        console_output=False,
         seed=seed,
         width=width,
         height=height,

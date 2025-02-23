@@ -1,6 +1,7 @@
 import argparse
 import json
 
+from flatland_blackbox.compute_results import aggregate_experiment_results
 from flatland_blackbox.run_experiments import (
     run_experiments,
     run_single_experiment,
@@ -110,9 +111,12 @@ def main():
     kwargs = vars(args)
 
     if args.mode == "experiments":
-        results = run_experiments(max_workers=8, **kwargs)
+        results = run_experiments(max_workers=12, **kwargs)
         csv_file_name = kwargs["output_csv"]
         write_results_to_csv(results, csv_file_name)
+        aggregate_experiment_results(
+            csv_file_name, out_csv="outputs/aggregated_results.csv"
+        )
     elif args.mode == "solve":
         run_single_experiment(**kwargs)
     elif args.mode == "train":

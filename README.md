@@ -70,8 +70,4 @@ When a single instance is run, the resulting paths can be vizualized under `/out
 
 ## Plotting Experiment Results
 
-After running experiments, you can generate summary plots with the provided script `plot_results.py`.
-
-```bash
-python plot_results.py --csv_file outputs/experiment_results.csv --out_dir outputs/plots
-```
+After running experiments, the details of each run along with the aggregated results can be found inside `/outputs/experiment_results.csv` and `/outputs/aggregated_results.csv` respectively.

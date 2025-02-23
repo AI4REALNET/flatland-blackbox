@@ -1,0 +1,2 @@
+num_agents,flowtime_pp_mean,flowtime_pp_min,flowtime_pp_max,flowtime_cbs_mean,flowtime_cbs_min,flowtime_cbs_max,flowtime_trained_pp_mean,flowtime_trained_pp_min,flowtime_trained_pp_max
+7,143.06060606060606,90.0,210.0,139.3939393939394,88.0,210.0,141.84848484848484,92.0,210.0

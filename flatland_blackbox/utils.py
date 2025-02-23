@@ -8,6 +8,7 @@ from flatland.core.env_observation_builder import DummyObservationBuilder
 from flatland.envs.line_generators import sparse_line_generator
 from flatland.envs.rail_env import RailEnv
 from flatland.envs.rail_generators import sparse_rail_generator
+from flatland.graphs.graph_utils import plotGraphEnv
 from flatland.utils.rendertools import RenderTool
 
 
@@ -362,102 +363,6 @@ def check_no_collisions(paths):
                 transitions[move_key] = agent_id
 
 
-def plotGraphEnv(
-    G,
-    env: RailEnv,
-    aImg,
-    space=0.3,
-    figsize=(8, 8),
-    dpi=100,
-    show_labels=(),
-    show_edges=("dir"),
-    show_edge_weights=False,
-    show_nodes="all",
-    node_colors=None,
-    edge_colors=None,
-    alpha_img=0.2,
-    node_size=300,
-    lvHighlight=None,
-    arrowsize=10,
-):
-    """
-    Plots the rail graph over the Flatland environment background.
-
-    Args:
-        G (nx.Graph): The graph to plot.
-        env (RailEnv): The Flatland environment.
-        aImg: The background image.
-        space (float): Spacing for node offset.
-        figsize (tuple): Figure size.
-        dpi (int): Dots per inch.
-        show_labels (tuple): Node types for which to show labels.
-        show_edges (tuple): Edge types to display.
-        show_edge_weights (bool): If True, display edge weights.
-        show_nodes (str or list): Node types to display.
-        node_colors (dict): Mapping from node type to color.
-        edge_colors (dict): Mapping from edge type to color.
-        alpha_img (float): Transparency for the background image.
-        node_size (int): Size of the nodes.
-        lvHighlight (list): List of nodes to highlight.
-        arrowsize (int): Size of the arrows.
-    """
-    xyDir = np.array([[0, 1], [1, 0], [0, -1], [-1, 0]])
-    xy2 = np.array([xyDir[(i + 1) % 4, :] for i in range(4)])
-    if figsize is not None:
-        plt.figure(figsize=figsize, dpi=dpi)
-    rows, cols = env.rail.grid.shape
-    plt.imshow(aImg, extent=(-0.5, cols - 0.5, 0.5 - rows, 0.5), alpha=alpha_img)
-    if show_nodes == "all":
-        nodelist = G.nodes()
-    else:
-        nodelist = [n for n, d in G.nodes(data=True) if d["type"] in show_nodes]
-    if node_colors is None:
-        node_colors = {"grid": "red", "rail": "lightblue"}
-    if edge_colors is None:
-        edge_colors = {"grid": "gray", "hold": "blue", "dir": "green"}
-    edgelist = [(u, v) for u, v, d in G.edges(data=True) if d["type"] in show_edges]
-    dnDat = G.nodes(data=True)
-    deDat = {(u, v): d for u, v, d in G.edges(data=True) if d["type"] in show_edges}
-    dnxyPos = {
-        n: (
-            n[1] if len(n) == 2 else n[1] - space * xy2[n[2], 0],
-            -n[0] if len(n) == 2 else -n[0] - space * xy2[n[2], 1],
-        )
-        for n in G.nodes()
-    }
-    nx.draw_networkx_edges(G, pos=dnxyPos, arrows=True, arrowstyle="-|>", ax=plt.gca())
-    nx.draw_networkx_nodes(
-        G,
-        pos=dnxyPos,
-        node_color=[node_colors[dnDat[n]["type"]] for n in nodelist],
-        node_size=node_size,
-        ax=plt.gca(),
-    )
-    nx.draw_networkx_labels(
-        G,
-        pos=dnxyPos,
-        labels={
-            n: f"({n[0]},{n[1]})"
-            for n, d in G.nodes(data=True)
-            if d["type"] in show_labels
-        },
-        font_size=8,
-        ax=plt.gca(),
-    )
-    nx.draw_networkx_edge_labels(
-        G,
-        pos=dnxyPos,
-        edge_labels={
-            e: f"{val:.2f}" for e, val in nx.get_edge_attributes(G, "learned_l").items()
-        },
-        font_size=6,
-        ax=plt.gca(),
-    )
-    plt.title(title)
-    plt.axis("equal")
-    plt.show()
-
-
 def check_no_collisions(paths):
     """
     Checks a set of agent paths for collisions.
@@ -505,102 +410,6 @@ def check_no_collisions(paths):
                 transitions[move_key] = agent_id
 
 
-def plotGraphEnv(
-    G,
-    env: RailEnv,
-    aImg,
-    space=0.3,
-    figsize=(8, 8),
-    dpi=100,
-    show_labels=(),
-    show_edges=("dir"),
-    show_edge_weights=False,
-    show_nodes="all",
-    node_colors=None,
-    edge_colors=None,
-    alpha_img=0.2,
-    node_size=300,
-    lvHighlight=None,
-    arrowsize=10,
-):
-    """
-    Plots the rail graph over the Flatland environment background image.
-
-    Args:
-        G (nx.Graph): The graph to plot.
-        env (RailEnv): The Flatland environment.
-        aImg: The background image.
-        space (float): Offset for node positions.
-        figsize (tuple): Figure size.
-        dpi (int): Dots per inch.
-        show_labels (tuple): Node types to label.
-        show_edges (tuple): Edge types to display.
-        show_edge_weights (bool): Whether to show edge weight labels.
-        show_nodes (str or list): Node types to display.
-        node_colors (dict): Mapping of node type to color.
-        edge_colors (dict): Mapping of edge type to color.
-        alpha_img (float): Transparency for the background image.
-        node_size (int): Size of nodes.
-        lvHighlight (list): List of nodes to highlight.
-        arrowsize (int): Arrow size.
-    """
-    xyDir = np.array([[0, 1], [1, 0], [0, -1], [-1, 0]])
-    xy2 = np.array([xyDir[(i + 1) % 4, :] for i in range(4)])
-    if figsize is not None:
-        plt.figure(figsize=figsize, dpi=dpi)
-    rows, cols = env.rail.grid.shape
-    plt.imshow(aImg, extent=(-0.5, cols - 0.5, 0.5 - rows, 0.5), alpha=alpha_img)
-    if show_nodes == "all":
-        nodelist = G.nodes()
-    else:
-        nodelist = [n for n, d in G.nodes(data=True) if d["type"] in show_nodes]
-    if node_colors is None:
-        node_colors = {"grid": "red", "rail": "lightblue"}
-    if edge_colors is None:
-        edge_colors = {"grid": "gray", "hold": "blue", "dir": "green"}
-    edgelist = [(u, v) for u, v, d in G.edges(data=True) if d["type"] in show_edges]
-    dnDat = G.nodes(data=True)
-    deDat = {(u, v): d for u, v, d in G.edges(data=True) if d["type"] in show_edges}
-    dnxyPos = {
-        n: (
-            n[1] if len(n) == 2 else n[1] - space * xy2[n[2], 0],
-            -n[0] if len(n) == 2 else -n[0] - space * xy2[n[2], 1],
-        )
-        for n in G.nodes()
-    }
-    nx.draw_networkx_edges(G, pos=dnxyPos, arrows=True, arrowstyle="-|>", ax=plt.gca())
-    nx.draw_networkx_nodes(
-        G,
-        pos=dnxyPos,
-        node_color=[node_colors[dnDat[n]["type"]] for n in nodelist],
-        node_size=node_size,
-        ax=plt.gca(),
-    )
-    nx.draw_networkx_labels(
-        G,
-        pos=dnxyPos,
-        labels={
-            n: f"({n[0]},{n[1]})"
-            for n, d in G.nodes(data=True)
-            if d["type"] in show_labels
-        },
-        font_size=8,
-        ax=plt.gca(),
-    )
-    nx.draw_networkx_edge_labels(
-        G,
-        pos=dnxyPos,
-        edge_labels={
-            e: f"{val:.2f}" for e, val in nx.get_edge_attributes(G, "learned_l").items()
-        },
-        font_size=6,
-        ax=plt.gca(),
-    )
-    plt.title(title)
-    plt.axis("equal")
-    plt.show()
-
-
 def initialize_environment(
     seed=42, width=30, height=30, num_agents=2, max_num_cities=3
 ):
@@ -631,7 +440,6 @@ def initialize_environment(
         obs_builder_object=DummyObservationBuilder(),
         number_of_agents=num_agents,
     )
-    env.reset(random_seed=seed)
     return env
 
 
@@ -646,7 +454,7 @@ def plot_agent_subgraphs(env, G_paths_subgraphs, save_fig_folder):
         G_paths_subgraphs (dict): Mapping from agent_id to agent subgraphs.
         save_fig_folder (str): Directory to save the plots.
     """
-    render_tool = RenderTool(env, show_debug=False)
+    render_tool = RenderTool(env, show_debug=True)
     render_tool.render_env(
         show_rowcols=True, show_inactive_agents=False, show_observations=False
     )
@@ -661,7 +469,6 @@ def plot_agent_subgraphs(env, G_paths_subgraphs, save_fig_folder):
             env,
             aImg,
             figsize=(8, 8),
-            dpi=100,
             node_size=8,
             space=0.1,
             node_colors={"rail": "blue", "grid": "red"},

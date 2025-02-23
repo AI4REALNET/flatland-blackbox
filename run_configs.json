@@ -5,9 +5,7 @@
   "num_seeds": 50,
   "start_seed": 0,
   "num_agents_list": [
-    2,
-    4,
-    8
+    7
   ],
   "max_cities_list": [
     2
