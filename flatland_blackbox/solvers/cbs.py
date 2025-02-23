@@ -2,10 +2,14 @@ from copy import deepcopy
 from heapq import heappop, heappush
 from math import inf
 
-from flatland_blackbox.solvers.errors import NoSolutionError
-from flatland_blackbox.utils.graph_utils import (
-    RailNode,
-    decide_node,
+from flatland_blackbox.utils import (
+    NoSolutionError,
+    get_col,
+    get_direction,
+    get_goal_proxy_node,
+    get_row,
+    get_start_proxy_node,
+    normalize_node,
     true_distance_heuristic,
 )
 
@@ -59,7 +63,7 @@ class EdgeConstraint:
 
 class HighLevelNode:
     def __init__(self, solution, constraints, cost):
-        # solution: dict {agent_id: [(RailNode, time), ...]}
+        # solution: dict {agent_id: [(node, time), ...]}
         self.solution = solution
         self.constraints = constraints
         self.cost = cost
@@ -79,40 +83,37 @@ class CBSSolver:
         self.open_list = []
         self.agent_data = (
             {}
-        )  # store {agent_id: {"start_node", "goal_node", "dist_map"}}
+        )  # {agent_id: {"start_node", "goal_node", "dist_map", "earliest_departure"}}
         self.plan_cache = {}  # key: (agent_id, constraints_key) -> path
 
-    def solve(self, agents, max_high_level_expansions=5_000):
+    def solve(self, agents, max_high_level_expansions=10_000):
         """
-        Returns dict: agent_id -> [(RailNode, time), ...]
+        Returns dict: agent_id -> [(node, time), ...]
         """
-        # Precompute agent data
+        # Precompute agent data.
         for agent in agents:
             row_s, col_s = agent.initial_position
             row_g, col_g = agent.target
+            start_node = get_start_proxy_node(self.nx_graph, row_s, col_s, agent.handle)
+            goal_node = get_goal_proxy_node(self.nx_graph, row_g, col_g)
 
-            start_tuple = decide_node(self.nx_graph, row_s, col_s, agent.handle)
-            goal_tuple = decide_node(self.nx_graph, row_g, col_g, agent.handle)
-
-            dist_map = true_distance_heuristic(self.nx_graph, goal_tuple)
+            dist_map = true_distance_heuristic(self.nx_graph, goal_node)
             assert None not in dist_map.values(), "Found None in distance map"
-            # print("agent_id: ",agent.handle, "edt:", agent.earliest_departure)
 
             self.agent_data[agent.handle] = {
-                "start_node": RailNode(*start_tuple),
-                "goal_node": RailNode(*goal_tuple),
+                "start_node": start_node,
+                "goal_node": goal_node,
                 "dist_map": dist_map,
                 "earliest_departure": getattr(agent, "earliest_departure", 0),
             }
 
-        # Build root constraints (none) and root solution
+        # Build root constraints (none) and root solution.
         root_constraints = Constraints()
         root_solution = {}
         for agent in agents:
             path = self._cbs_a_star(agent_id=agent.handle, constraints=root_constraints)
             if not path:
                 raise NoSolutionError(f"No path found for agent {agent.handle}")
-
             root_solution[agent.handle] = path
 
         root_cost = self.compute_solution_cost(root_solution)
@@ -123,8 +124,6 @@ class CBSSolver:
         expansions_count = 0
         while self.open_list:
             expansions_count += 1
-            # if expansions_count % 1000 == 0:
-            #     print(f"Expansions: {expansions_count}, Open list size: {len(self.open_list)}")
             if expansions_count > max_high_level_expansions:
                 raise NoSolutionError(
                     f"CBS high-level search exceeded expansion limit ({max_high_level_expansions})."
@@ -137,11 +136,9 @@ class CBSSolver:
                 # print(f"Solution found after {expansions_count} expansions")
                 return current.solution
 
-            # print("Conflict detected:", conflict)
-
+            print("Conflict detected:", conflict)
             for agent_id, constraint_info in self.generate_constraints(conflict):
                 # print(f"    Adding constraint for agent {agent_id}: {constraint_info}")
-
                 child_node = deepcopy(current)
                 ctype = constraint_info["type"]
                 if ctype == "vertex":
@@ -154,31 +151,17 @@ class CBSSolver:
                         constraint_info["loc1"],
                         constraint_info["loc2"],
                     )
-
                 # Replan for that agent with the updated constraints
                 new_path = self._cbs_a_star(
                     agent_id=agent_id, constraints=child_node.constraints
                 )
-
                 if not new_path:
                     continue
-
                 child_node.solution[agent_id] = new_path
                 child_node.cost = self.compute_solution_cost(child_node.solution)
                 heappush(self.open_list, child_node)
 
         raise NoSolutionError("No solution found by CBS")
-
-    # def _copy_high_level_node(self, node):
-    #     """
-    #     Create a lightweight copy of a high-level node, copying only the necessary parts.
-    #     We do a deep copy of the solution dictionary so that the time stamps are preserved.
-    #     """
-    #     new_solution = {agent_id: list(path) for agent_id, path in node.solution.items()}
-    #     new_constraints = Constraints()
-    #     new_constraints.vertex_constraints = set(node.constraints.vertex_constraints)
-    #     new_constraints.edge_constraints = set(node.constraints.edge_constraints)
-    #     return HighLevelNode(new_solution, new_constraints, node.cost)
 
     def _cbs_a_star(self, agent_id, constraints):
         # Generate a key for the current constraint set.
@@ -199,61 +182,61 @@ class CBSSolver:
 
         # Compute heuristic for start.
         start_occ_time = int(edt)
-        s_key = (start_node.row, start_node.col, start_node.direction)
+        s_key = normalize_node(start_node)
         start_h = dist_dict.get(s_key, inf)
         start_f = edt + start_h
         start_g = 0.0
-
         heappush(open_list, (start_f, start_g, start_node, start_occ_time, None))
 
         while open_list:
             f_val, g_val, node, t, parent = heappop(open_list)
-            # print(f"Expanding agent {agent_id}: Node ({node.row},{node.col}) at time {t}, g_val {g_val}")
 
-            # Check goal: if current node's position equals goal's position.
-            if (node.row, node.col) == (goal_node.row, goal_node.col):
+            # Check goal: compare row, col only.
+            if (get_row(node), get_col(node)) == (
+                get_row(goal_node),
+                get_col(goal_node),
+            ):
                 path = self._reconstruct_path((node, t, parent))
                 self.plan_cache[(agent_id, constraints_key)] = path
                 return path
 
-            # Mark this state as visited.
             if (node, t) in visited and visited[(node, t)] <= g_val:
                 continue
             visited[(node, t)] = g_val
 
-            raw_node = (node.row, node.col, node.direction)
-            if raw_node in self.nx_graph:
-                for nbr in self.nx_graph.neighbors(raw_node):
-                    cost = self.nx_graph.get_edge_data(raw_node, nbr).get("l", 1)
+            # Use the full node tuple as key.
+            if node in self.nx_graph:
+                for nbr in self.nx_graph.neighbors(node):
+                    cost = self.nx_graph.get_edge_data(node, nbr).get("l", 1)
                     arrival = int(t + cost)
-                    nbr_node = RailNode(*nbr)
+                    # nbr is used directly (no RailNode wrapper).
+                    # Check vertex and edge constraints.
                     if constraints.is_vertex_constrained(
-                        arrival, (nbr_node.row, nbr_node.col)
+                        arrival, (get_row(nbr), get_col(nbr))
                     ):
                         continue
                     if constraints.is_edge_constrained(
-                        t, (node.row, node.col), (nbr_node.row, nbr_node.col)
+                        t, (get_row(node), get_col(node)), (get_row(nbr), get_col(nbr))
                     ):
                         continue
                     new_g = g_val + cost
-                    s2_key = (nbr_node.row, nbr_node.col, nbr_node.direction)
+                    s2_key = normalize_node(nbr)
                     h_val = dist_dict.get(s2_key, inf)
                     if h_val == inf:
                         continue
                     new_f = new_g + h_val
-                    if (nbr_node, arrival) not in visited or visited[
-                        (nbr_node, arrival)
-                    ] > new_g:
+                    if (nbr, arrival) not in visited or visited[(nbr, arrival)] > new_g:
                         heappush(
-                            open_list,
-                            (new_f, new_g, nbr_node, arrival, (node, t, parent)),
+                            open_list, (new_f, new_g, nbr, arrival, (node, t, parent))
                         )
 
             # Expand wait action.
             wait_t = int(t + 1)
-            if not constraints.is_vertex_constrained(wait_t, (node.row, node.col)):
+            if not constraints.is_vertex_constrained(
+                wait_t, (get_row(node), get_col(node))
+            ):
                 new_g = g_val + 1
-                s2_key = (node.row, node.col, node.direction)
+                s2_key = normalize_node(node)
                 h_val = dist_dict.get(s2_key, inf)
                 if h_val != inf:
                     new_f = new_g + h_val
@@ -273,7 +256,7 @@ class CBSSolver:
         max_time = 0
         for agent_id, path in solution.items():
             if path:
-                t_last = int(path[-1][1]) if self.vanish_at_goal else int(path[-1][1])
+                t_last = int(path[-1][1])
                 max_time = max(max_time, t_last)
 
         # Vertex Conflict Check
@@ -285,18 +268,17 @@ class CBSSolver:
                     continue
                 if self.vanish_at_goal and t > int(path[-1][1]):
                     continue
-                # Find the node for this agent at time t:
                 node = None
                 for n, t_val in path:
                     if int(t_val) == t:
-                        if self._is_proxy(n):
-                            node = None
-                            break  # Skip this agent if its current node is a proxy.
+                        # if self._is_proxy(n):
+                        #     node = None
+                        #     break  # Skip this agent if in a proxy.
                         node = n
                         break
                 if node is None:
                     continue
-                pos = (node.row, node.col)
+                pos = (get_row(node), get_col(node))
                 pos_to_agents.setdefault(pos, []).append(agent_id)
                 if len(pos_to_agents[pos]) > 1:
                     return {
@@ -306,24 +288,24 @@ class CBSSolver:
                         "location": pos,
                     }
 
-        # --- Edge Conflict Check ---
-        moves = {}  # key: (t, from_pos, to_pos) -> list of agent_ids
+        # Edge Conflict Check.
+        moves = {}
         for agent_id, path in solution.items():
             edt = self.agent_data[agent_id]["earliest_departure"]
             for i in range(len(path) - 1):
                 (node1, t1) = path[i]
                 (node2, t2) = path[i + 1]
-                # Only consider moves that progress in time and after the agent has started.
                 if t2 > t1 and t1 >= edt:
-                    # If vanish_at_goal is enabled and t2 is after the arrival time, skip the move.
                     if self.vanish_at_goal and t2 > int(path[-1][1]):
                         continue
-                    # Skip the move if either node is a proxy.
-                    if self._is_proxy(node1) or self._is_proxy(node2):
-                        continue
-                    key = (int(t1), (node1.row, node1.col), (node2.row, node2.col))
+                    # if self._is_proxy(node1) or self._is_proxy(node2):
+                    #     continue
+                    key = (
+                        int(t1),
+                        (get_row(node1), get_col(node1)),
+                        (get_row(node2), get_col(node2)),
+                    )
                     moves.setdefault(key, []).append(agent_id)
-
         for (t, pos_from, pos_to), agents in moves.items():
             reverse_key = (t, pos_to, pos_from)
             if reverse_key in moves:
@@ -343,7 +325,6 @@ class CBSSolver:
         a1, a2 = conflict["agents"]
         ctype = conflict["type"]
         if ctype == "vertex":
-            # Branch A: forbid agent a1
             yield (
                 a1,
                 {
@@ -352,7 +333,6 @@ class CBSSolver:
                     "location": conflict["location"],
                 },
             )
-            # Branch B: forbid agent a2
             yield (
                 a2,
                 {
@@ -362,36 +342,39 @@ class CBSSolver:
                 },
             )
         else:
-            # For an edge conflict, forbid the corresponding move for each agent.
-            c_info1 = {
-                "type": "edge",
-                "time": conflict["time"],
-                "loc1": conflict["loc1"],
-                "loc2": conflict["loc2"],
-            }
-            c_info2 = {
-                "type": "edge",
-                "time": conflict["time"],
-                "loc1": conflict["loc2"],
-                "loc2": conflict["loc1"],
-            }
-            yield (a1, c_info1)
-            yield (a2, c_info2)
+            yield (
+                a1,
+                {
+                    "type": "edge",
+                    "time": conflict["time"],
+                    "loc1": conflict["loc1"],
+                    "loc2": conflict["loc2"],
+                },
+            )
+            yield (
+                a2,
+                {
+                    "type": "edge",
+                    "time": conflict["time"],
+                    "loc1": conflict["loc2"],
+                    "loc2": conflict["loc1"],
+                },
+            )
 
     def compute_solution_cost(self, solution):
-        return sum(
-            (filtered_path[-1][1] - filtered_path[0][1])
-            for path in solution.values()
-            for filtered_path in [[(n, t) for (n, t) in path if n.direction != -1]]
-            if filtered_path
-        )
+        total = 0
+        for path in solution.values():
+            filtered = [(n, t) for (n, t) in path if get_direction(n) != -1]
+            if filtered:
+                total += filtered[-1][1] - filtered[0][1]
+        return total
 
     def _reconstruct_path(self, final_state):
         path = []
         curr = final_state
         while curr:
             node, t, parent = curr
-            path.append((node, t))
+            path.append((node, int(t)))
             curr = parent
         return list(reversed(path))
 
@@ -406,4 +389,4 @@ class CBSSolver:
 
     def _is_proxy(self, node):
         """Returns True if the node is a proxy node (direction == -1)."""
-        return node.direction == -1
+        return get_direction(node) == -1

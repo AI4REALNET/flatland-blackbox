@@ -1,27 +1,70 @@
-from collections import namedtuple
+import glob
+import os
 
 import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
+from flatland.core.env_observation_builder import DummyObservationBuilder
+from flatland.envs.line_generators import sparse_line_generator
 from flatland.envs.rail_env import RailEnv
+from flatland.envs.rail_generators import sparse_rail_generator
+from flatland.utils.rendertools import RenderTool
 
-RailNode = namedtuple("RailNode", ["row", "col", "direction"])
+
+class NoSolutionError(Exception):
+    """Raised when the solver fails to find any solution paths."""
+
+    pass
+
+
+# Helper functions for raw node tuples.
+def get_row(node):
+    return node[0]
+
+
+def get_col(node):
+    return node[1]
+
+
+def get_direction(node):
+    return node[2]
+
+
+def normalize_node(node):
+    # If the node is a 4-tuple (start proxy), ignore the agent_id for heuristic purposes.
+    return node[:3] if len(node) == 4 else node
+
+
+# def convert_node_to_np_ints(node):
+#     # Just for concistency
+#     return tuple(np.int64(x) for x in node)
+
+
+def is_proxy_node(node):
+    """Return True if the node is a proxy node.
+
+    Assumes nodes are tuples; proxies are either 4-tuples or have a direction of -1.
+    """
+    return get_direction(node) == -1
 
 
 def filter_proxy_nodes(plan):
-    """
-    Returns an updated plan with all entries where node.direction is -1 removed.
-
-    Args:
-        plan (dict): Dictionary where keys map to lists of (node, value) tuples.
-
-    Returns:
-        dict: A new plan dictionary with filtered tuples.
-    """
     return {
-        key: [(node, t) for (node, t) in path if node.direction != -1]
+        key: [(node, t) for (node, t) in path if not is_proxy_node(node)]
         for key, path in plan.items()
     }
+
+
+def print_proxy_nodes(G):
+    proxy_nodes = [
+        (n, data) for n, data in G.nodes(data=True) if data.get("type") == "proxy"
+    ]
+    if proxy_nodes:
+        print("Proxy nodes found:")
+        for n, data in proxy_nodes:
+            print(n, data)
+    else:
+        print("No proxy nodes found.")
 
 
 def get_rail_subgraph(nx_graph):
@@ -91,72 +134,84 @@ def true_distance_heuristic(nx_graph, goal_node):
     return dist
 
 
-def add_proxy_nodes_for_agents(graph, agents, cost=0, copy_graph=True):
-    if copy_graph:
-        G = graph.copy()
-    else:
-        G = graph
-
+def add_proxy_nodes(G, agents, cost=0.0):
+    # Make a copy and operate on it.
+    H = G.copy()
     for agent in agents:
-        add_single_agent_proxy(G, agent, cost)
+        add_single_agent_proxy(H, agent, cost)
+    return H
 
-    return G
 
+def add_single_agent_proxy(G, agent, cost=0.0):
+    # Convert coordinates and agent_id to np.int64 for consistency.
+    start_r, start_c = map(np.int64, agent.initial_position)
+    end_r, end_c = map(np.int64, agent.target)
+    agent_id = np.int64(agent.handle)  # convert agent handle to np.int64
 
-def add_single_agent_proxy(G, agent, cost=0):
-    (start_r, start_c) = agent.initial_position
-    (end_r, end_c) = agent.target
+    # Create a unique start proxy node as a 4-tuple.
+    proxy_start = (start_r, start_c, -1, agent_id)
+    G.add_node(proxy_start, type="proxy", agent_id=agent_id)
 
-    proxy_start = (start_r, start_c, -1)
-    proxy_end = (end_r, end_c, -1)
-
-    G.add_node(proxy_start, type="proxy")
-    G.add_node(proxy_end, type="proxy")
-
+    # Connect the proxy_start to all rail nodes in that cell.
     s_nodes = get_rail_nodes_in_cell(G, start_r, start_c)
     for n in s_nodes:
         G.add_edge(proxy_start, n, l=cost)
 
-    e_nodes = get_rail_nodes_in_cell(G, end_r, end_c)
-    for n in e_nodes:
-        G.add_edge(n, proxy_end, l=cost)
+    # For the goal, use a shared proxy node as a 3-tuple.
+    proxy_end = (end_r, end_c, -1)
+    if proxy_end not in G:
+        G.add_node(proxy_end, type="proxy")
+        e_nodes = get_rail_nodes_in_cell(G, end_r, end_c)
+        for n in e_nodes:
+            G.add_edge(n, proxy_end, l=cost)
 
 
 def get_rail_nodes_in_cell(G, row, col):
     return [
         n
         for n in G.nodes()
-        if (n[0] == row and n[1] == col and G.nodes[n].get("type") == "rail")
+        if n[0] == row and n[1] == col and G.nodes[n].get("type") == "rail"
     ]
 
 
-def decide_node(nx_graph, row, col, agent_id):
+def get_start_proxy_node(nx_graph, row, col, agent_id):
     """
-    If exactly one node matches (row, col), use it.
-    If multiple nodes match (row, col), look for direction=-1.
-    If none is found, or no direction=-1, throw error.
+    Returns the start node for an agent at (row, col).
+    Looks for the agent-specific start proxy node,
+    identified by type=="proxy", proxy_role=="start", and agent_id matching.
     """
-    matching_nodes = [n for n in nx_graph.nodes() if (n[0], n[1]) == (row, col)]
-    if len(matching_nodes) == 0:
-        raise ValueError(f"Agent {agent_id}: no node found at row={row}, col={col}")
-
-    if len(matching_nodes) == 1:
-        # Exactly one node > use it
-        single_n = matching_nodes[0]
-        # print(f"[DEBUG] Agent {agent_id}: single node {single_n}")
-        return RailNode(*single_n)
+    matching_nodes = [n for n in nx_graph.nodes() if n[0] == row and n[1] == col]
+    agent_proxies = [
+        n
+        for n in matching_nodes
+        if nx_graph.nodes[n].get("type") == "proxy"
+        and nx_graph.nodes[n].get("agent_id") == agent_id
+    ]
+    if agent_proxies:
+        return agent_proxies[0]
     else:
-        # multiple nodes > look for direction=-1
-        candidates = [n for n in matching_nodes if n[2] == -1]
-        if not candidates:
-            raise ValueError(
-                f"Agent {agent_id}: multiple nodes at (row={row}, col={col}) but none with direction=-1"
-            )
-        # if len(candidates) > 1:
-        #     print(f"[WARNING] Agent {agent_id}: multiple direction=-1 matches, picking first. {candidates}")
-        chosen = candidates[0]
-        # print(f"[DEBUG] Agent {agent_id}: multiple matches => picking {chosen}")
-        return chosen
+        raise ValueError(
+            f"Agent {agent_id}: no start proxy found at row={row}, col={col}"
+        )
+
+
+def get_goal_proxy_node(nx_graph, row, col):
+    """
+    Returns the goal node for an agent at (row, col).
+    Looks for the shared goal proxy node,
+    identified by type=="proxy" and proxy_role=="goal".
+    """
+    matching_nodes = [n for n in nx_graph.nodes() if n[0] == row and n[1] == col]
+    shared_proxies = [
+        n
+        for n in matching_nodes
+        if nx_graph.nodes[n].get("type") == "proxy"
+        and "agent_id" not in nx_graph.nodes[n]
+    ]
+    if shared_proxies:
+        return shared_proxies[0]
+    else:
+        raise ValueError(f"No shared goal proxy found at row={row}, col={col}")
 
 
 def visualize_graph_weights(G, title, scale=True):
@@ -216,11 +271,11 @@ def visualize_graph_weights(G, title, scale=True):
 
 def check_no_collisions(paths):
     """
-    paths: dict of agent_id -> list of (RailNode, timestep)
+    paths: dict of agent_id -> list of (node, timestep)
     Example of paths:
       {
-          0: [(RailNode(row=14, col=16, direction=-1), 0),
-              (RailNode(row=14, col=16, direction=3), 1),
+          0: [(node(row=14, col=16, direction=-1), 0),
+              (node(row=14, col=16, direction=3), 1),
               ...],
           1: [...],
           ...
@@ -236,14 +291,14 @@ def check_no_collisions(paths):
     for agent_id, path in paths.items():
         for node, t in path:
             # Skip checking if this node is a proxy node.
-            if node.direction == -1:
+            if is_proxy_node(node):
                 continue
-            pos_time = (node.row, node.col, t)
+            pos_time = (get_row(node), get_col(node), t)
             if pos_time in seen_positions:
                 other_agent = seen_positions[pos_time]
                 raise AssertionError(
                     f"Collision detected! Agent {agent_id} and agent {other_agent} "
-                    f"both at row={node.row}, col={node.col} at time={t}"
+                    f"both at row={get_row(node)}, col={get_col(node)} at time={t}"
                 )
             seen_positions[pos_time] = agent_id
 
@@ -258,9 +313,15 @@ def check_no_collisions(paths):
             (node2, t2) = path[i + 1]
             # Only consider moves that progress in time
             if t2 > t1:
-                move_key = ((node1.row, node1.col, t1), (node2.row, node2.col, t2))
+                move_key = (
+                    (get_row(node1), get_col(node1), t1),
+                    (get_row(node2), get_col(node2), t2),
+                )
                 # If we see the reverse move, it's a collision
-                reverse_key = ((node2.row, node2.col, t1), (node1.row, node1.col, t2))
+                reverse_key = (
+                    (get_row(node2), get_col(node2), t1),
+                    (get_row(node1), get_col(node1), t2),
+                )
 
                 if reverse_key in transitions:
                     other_agent = transitions[reverse_key]
@@ -387,3 +448,81 @@ def plotGraphEnv(
     if lvHighlight is not None:
         xyV = np.matmul(np.array(lvHighlight), [[0, -1], [1, 0]])
         plt.scatter(*xyV.T, s=900, marker="s", facecolor="none", edgecolor="red")
+
+
+def initialize_environment(
+    seed=42, width=30, height=30, num_agents=2, max_num_cities=3
+):
+    env = RailEnv(
+        width=width,
+        height=height,
+        rail_generator=sparse_rail_generator(
+            max_num_cities=max_num_cities,
+            grid_mode=False,
+            max_rails_between_cities=4,
+            max_rail_pairs_in_city=2,
+            seed=seed,
+        ),
+        line_generator=sparse_line_generator(seed=seed),
+        obs_builder_object=DummyObservationBuilder(),
+        number_of_agents=num_agents,
+    )
+    env.reset(random_seed=seed)
+    return env
+
+
+def plot_agent_subgraphs(env, G_paths_subgraphs, save_fig_folder):
+    """
+    Plots each agent's subgraph over the environment background image.
+
+    This function renders the environment using a RenderTool instance to obtain a background
+    image. It then overlays each agent's subgraph on this image using plotGraphEnv.
+    It clears out any previous PNG files in that folder and saves the new figures.
+
+    Args:
+        env: The Flatland environment.
+        G_paths_subgraphs (dict): Dictionary mapping agent IDs to their subgraphs.
+    """
+    # Create a RenderTool instance and render the environment to get the background image.
+    render_tool = RenderTool(env, show_debug=False)
+    render_tool.render_env(
+        show_rowcols=True, show_inactive_agents=False, show_observations=False
+    )
+    aImg = render_tool.get_image()
+    # Remove any previous PNG files in the folder.
+    png_files = glob.glob(os.path.join(save_fig_folder, "*.png"))
+    for file in png_files:
+        os.remove(file)
+
+    # Plot each agent's subgraph.
+    for agent_id, Gpath in G_paths_subgraphs.items():
+        plt.figure(figsize=(8, 8))
+        plotGraphEnv(
+            Gpath,
+            env,
+            aImg,
+            figsize=(8, 8),
+            dpi=100,
+            node_size=8,
+            space=0.1,
+            node_colors={"rail": "blue", "grid": "red"},
+            edge_colors={"hold": "gray", "dir": "green"},
+            show_nodes=("rail", "grid"),
+            show_edges=("dir"),
+            show_labels=(),
+            show_edge_weights=True,
+            alpha_img=0.7,
+        )
+        plt.title(f"Agent {agent_id} path")
+        plt.savefig(f"{save_fig_folder}/path_agent_{agent_id}.png", dpi="figure")
+        plt.close("all")
+
+
+def print_agents_start(agents):
+    for agent in agents:
+        start_rc = tuple(map(int, agent.initial_position))
+        end_rc = tuple(map(int, agent.target))
+        print(
+            f"Agent {agent.handle} start: {start_rc}"
+            f" end: {end_rc} edt: {agent.earliest_departure}"
+        )

@@ -7,20 +7,20 @@ from flatland.graphs.graph_utils import RailEnvGraph
 from tqdm import tqdm
 
 from flatland_blackbox.solvers.cbs import CBSSolver
-from flatland_blackbox.solvers.errors import NoSolutionError
 from flatland_blackbox.solvers.pp import PrioritizedPlanningSolver
 from flatland_blackbox.train import train_and_apply_weights
-from flatland_blackbox.utils.graph_utils import (
-    add_proxy_nodes_for_agents,
+from flatland_blackbox.utils import (
+    NoSolutionError,
+    add_proxy_nodes,
     check_no_collisions,
     filter_proxy_nodes,
+    get_col,
     get_rail_subgraph,
-    shift_overlapping_edts,
-)
-from flatland_blackbox.utils.run_utils import (
+    get_row,
     initialize_environment,
     plot_agent_subgraphs,
     print_agents_start,
+    shift_overlapping_edts,
 )
 
 
@@ -70,99 +70,90 @@ def run_single_experiment(plot=True, **kwargs):
         max_num_cities=max_cities,
     )
     agents = env.agents
-    # Build graph with cost=1 edges
     rail_env_graph = RailEnvGraph(env)
-    G_rail = (
-        rail_env_graph.graph_rail_grid()
-    )  # Or use reduce_simple_paths() to compress lengths
+    G_rail = rail_env_graph.graph_rail_grid()  # Or use reduce_simple_paths()
     nx_rail_graph = get_rail_subgraph(G_rail)
-    solver_graph = add_proxy_nodes_for_agents(nx_rail_graph, agents)
+    solver_graph = add_proxy_nodes(nx_rail_graph, agents)
 
-    # Sort agents by earliest departure and shift overlapping EDTs
+    # Sort agents by earliest departure time and shift overlapping EDTs.
     sorted_agents = sorted(agents, key=lambda a: a.earliest_departure)
     sorted_agents_shifted = shift_overlapping_edts(sorted_agents)
-
     print_agents_start(sorted_agents_shifted)
 
-    cbs_orig = {}
-    pp_orig = {}
+    # Initialize solution variables.
+    pp_plan, cbs_plan, final_plan, G_rail_updated = None, None, None, None
 
-    try:
-        if solver_type in ("pp", "cbs"):
-            # Run PP or CBS on cost=1 edges
-            final_plan = run_solver(solver_graph, sorted_agents_shifted, solver_type)
-            final_filtered_plan = filter_proxy_nodes(final_plan)
-            check_no_collisions(final_filtered_plan)
-        elif solver_type == "trained":
-            try:
-                cbs_orig = run_solver(solver_graph, sorted_agents_shifted, "cbs")
-            except NoSolutionError as e:
-                print("[WARNING] Skipping run because CBS did not find a solution.")
-                return None, None, None
+    if solver_type in ("pp", "cbs"):
+        print(f"Running {solver_type}...")
+        # Run PP or CBS on cost=1 edges
+        final_plan = run_solver(solver_graph, sorted_agents_shifted, solver_type)
+        final_plan = filter_proxy_nodes(final_plan)
+        check_no_collisions(final_plan)
+        print_agent_paths(final_plan, solver_type)
+        print("Flow time: ", compute_flowtime(final_plan))
+        generate_and_plot_agent_subgraphs(env, G_rail, final_plan, solver_type)
+        return None, None, None
 
-            # Run PP on cost=1 edges
-            pp_orig = run_solver(solver_graph, sorted_agents_shifted, "pp")
+    elif solver_type == "trained":
+        try:
+            print("Running cbs...")
+            cbs_plan = run_solver(solver_graph, sorted_agents_shifted, "cbs")
+        except NoSolutionError as e:
+            print(f"[WARNING] Skipping run because CBS did not find a solution: {e}")
+            return None, None, None
 
-            G_rail_updated, final_plan = train_and_apply_weights(
-                solver_graph,
-                sorted_agents_shifted,
-                cbs_orig,
-                iters=iters_,
-                lr=lr_,
-                lam=lam_,
-            )
-            # Now filter the proxy nodes out
-            pp_orig_filtered = filter_proxy_nodes(pp_orig)
-            cbs_orig_filtered = filter_proxy_nodes(cbs_orig)
-            final_filtered_plan = filter_proxy_nodes(final_plan)
-        else:
-            raise ValueError(f"Unknown solver type: {solver_type}")
+        print("Running pp...")
+        # Run PP on cost=1 edges
+        pp_plan = run_solver(solver_graph, sorted_agents_shifted, "pp")
 
-        check_no_collisions(pp_orig_filtered)
-        check_no_collisions(cbs_orig_filtered)
-        check_no_collisions(final_filtered_plan)
+        G_rail_updated, final_plan = train_and_apply_weights(
+            solver_graph,
+            sorted_agents_shifted,
+            cbs_plan,
+            iters=iters_,
+            lr=lr_,
+            lam=lam_,
+        )
+        # Filter the proxy nodes out
+        pp_plan = filter_proxy_nodes(pp_plan)
+        cbs_plan = filter_proxy_nodes(cbs_plan)
+        final_plan = filter_proxy_nodes(final_plan)
 
-        flow_time_pp = compute_flowtime(pp_orig_filtered)
-        flow_time_cbs = compute_flowtime(cbs_orig_filtered)
-        flow_time_fpp = compute_flowtime(final_filtered_plan)
+        # Check for collisions.
+        check_no_collisions(pp_plan)
+        check_no_collisions(cbs_plan)
+        check_no_collisions(final_plan)
 
-        print_agent_paths(pp_orig_filtered, "PP plan:")
-        print_agent_paths(cbs_orig_filtered, "CBS plan:")
-        print_agent_paths(final_filtered_plan, "PP final plan:")
+        # Compute flow times.
+        flow_time_pp = compute_flowtime(pp_plan)
+        flow_time_cbs = compute_flowtime(cbs_plan)
+        flow_time_fpp = compute_flowtime(final_plan)
+
+        # Print paths and flow time results.
+        print_agent_paths(pp_plan, solver_type)
+        print_agent_paths(cbs_plan, solver_type)
+        print_agent_paths(final_plan, solver_type)
 
         print(
-            "\n### Flow times: PP:",
-            flow_time_pp,
-            "CBS:",
-            flow_time_cbs,
-            "PP final:",
-            flow_time_fpp,
+            f"\n### Flow times: pp: {flow_time_pp}  cbs: {flow_time_cbs}  pp final: {flow_time_fpp}"
         )
 
-        # assert flow_time_pp >= flow_time_cbs, "PP flow time is lower than CBS flow time"
-        # assert flow_time_fpp >= flow_time_cbs, "Learned PP flow time is lower than CBS flow time"
+        assert flow_time_pp >= flow_time_cbs, "PP flow time is lower than CBS flow time"
+        assert (
+            flow_time_fpp >= flow_time_cbs
+        ), "Learned PP flow time is lower than CBS flow time"
 
         if flow_time_pp < flow_time_fpp:
-            print(
-                "[WARNING] Learned PP flow time is higher than original PP flow time."
-            )
+            print("[WARNING] Final pp flow time is higher than original PP flow time.")
 
         if plot:
-            generate_and_plot_agent_subgraphs(env, G_rail, pp_orig_filtered, "pp")
-            generate_and_plot_agent_subgraphs(env, G_rail, cbs_orig_filtered, "cbs")
+            generate_and_plot_agent_subgraphs(env, G_rail, pp_plan, "pp")
+            generate_and_plot_agent_subgraphs(env, G_rail, cbs_plan, "cbs")
             generate_and_plot_agent_subgraphs(
-                env, G_rail_updated, final_filtered_plan, "trained"
+                env, G_rail_updated, final_plan, "trained"
             )
 
         return flow_time_pp, flow_time_cbs, flow_time_fpp
-
-    except NoSolutionError as e:
-        print(f"[WARNING] No solution found. Reason: {e}")
-        return (
-            None,
-            None,
-            None,
-        )
 
 
 def run_experiments(**kwargs):
@@ -191,13 +182,15 @@ def run_experiments(**kwargs):
     """
     results = []
     seeds = range(kwargs["start_seed"], kwargs["start_seed"] + kwargs["num_seeds"])
-    num_agents_list = kwargs["num_agents_list"]
-    max_cities_list = kwargs["max_cities_list"]
-    width_list = kwargs["width_list"]
-    height_list = kwargs["height_list"]
 
     all_configs = list(
-        product(seeds, num_agents_list, max_cities_list, width_list, height_list)
+        product(
+            seeds,
+            kwargs["num_agents_list"],
+            kwargs["max_cities_list"],
+            kwargs["width_list"],
+            kwargs["height_list"],
+        )
     )
     total = len(all_configs)
 
@@ -240,7 +233,7 @@ def compute_flowtime(plan_dict):
     Flow time is defined as the sum of the durations of each agent's path.
 
     Args:
-        plan_dict (dict): Mapping from agent_id to a list of (RailNode, time) tuples.
+        plan_dict (dict): Mapping from agent_id to a list of (node, time) tuples.
 
     Returns:
         int or None: The total flow time if paths exist; otherwise, None.
@@ -264,7 +257,7 @@ def run_solver(graph, agents, solver_type):
         solver_type (str): The solver to run, either "pp" or "cbs".
 
     Returns:
-        dict: Mapping from agent_id to a list of (RailNode, time) tuples.
+        dict: Mapping from agent_id to a list of (node, time) tuples.
 
     Raises:
         NoSolutionError: If the solver cannot find a solution.
@@ -284,38 +277,19 @@ def run_solver(graph, agents, solver_type):
     return plan
 
 
-def write_results_to_csv(results, filename):
-    """Writes experiment results to a CSV file.
-
-    Args:
-        results (list[dict]): List of result dictionaries.
-        filename (str): Path to the output CSV file.
-    """
-    if not results:
-        print("No results to write.")
-        return
-    keys = list(results[0].keys())
-    os.makedirs(os.path.dirname(filename), exist_ok=True)
-    with open(filename, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=keys)
-        writer.writeheader()
-        writer.writerows(results)
-    print(f"Results written to {filename}")
-
-
 def print_agent_paths(plan, solver_name):
     """Prints a summary of each agent's path.
 
     Args:
-        plan (dict): Mapping from agent_id to a list of (RailNode, time) tuples.
+        plan (dict): Mapping from agent_id to a list of (node, time) tuples.
         solver_name (str): Identifier for the solver (e.g., "pp", "cbs", "trained").
 
     Raises:
         AssertionError: If any agent's times are not strictly increasing.
     """
-    print(f"### {solver_name}")
+    print(f"### {solver_name} path: ")
     for agent_id, path in plan.items():
-        coords = [((int(n.row), int(n.col)), t) for n, t in path]
+        coords = [((int(get_row(n)), int(get_col(n))), t) for n, t in path]
         assert all(
             path[i + 1][1] > path[i][1] for i in range(len(path) - 1)
         ), f"Agent {agent_id} has non‐strictly‐increasing times!"
@@ -333,7 +307,7 @@ def generate_and_plot_agent_subgraphs(env, G_rail, solution, solver_type):
     Args:
         env (Environment): The Flatland environment.
         G_rail (nx.Graph): The rail subgraph.
-        solution (dict): Mapping from agent_id to a list of (RailNode, time) tuples.
+        solution (dict): Mapping from agent_id to a list of (node, time) tuples.
         solver_type (str): Identifier for the solver (used in naming output files).
     """
     G_paths_subgraphs = {}
@@ -342,7 +316,26 @@ def generate_and_plot_agent_subgraphs(env, G_rail, solution, solver_type):
         G_sub = nx.induced_subgraph(G_rail, only_nodes)
         G_paths_subgraphs[a_id] = G_sub
 
-    print("Generating plots ...")
+    print(f"Generating {solver_type} plots ...")
     plot_agent_subgraphs(
         env, G_paths_subgraphs, save_fig_folder=f"outputs/{solver_type}"
     )
+
+
+def write_results_to_csv(results, filename):
+    """Writes experiment results to a CSV file.
+
+    Args:
+        results (list[dict]): List of result dictionaries.
+        filename (str): Path to the output CSV file.
+    """
+    if not results:
+        print("No results to write.")
+        return
+    keys = list(results[0].keys())
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
+    with open(filename, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=keys)
+        writer.writeheader()
+        writer.writerows(results)
+    print(f"Results written to {filename}")

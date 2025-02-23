@@ -1,10 +1,15 @@
 import pytest
-from matplotlib import pyplot as plt
 from test_utils import MockAgent
 
 from flatland_blackbox.solvers.cbs import CBSSolver
 from flatland_blackbox.solvers.pp import PrioritizedPlanningSolver
-from flatland_blackbox.utils.graph_utils import get_rail_subgraph
+from flatland_blackbox.utils import (
+    add_proxy_nodes,
+    filter_proxy_nodes,
+    get_col,
+    get_rail_subgraph,
+    get_row,
+)
 
 
 @pytest.mark.parametrize("solver_cls", [PrioritizedPlanningSolver, CBSSolver])
@@ -12,15 +17,24 @@ def test_single_agent_tiny(tiny_test_graph, solver_cls):
     """
     Single agent traveling from (0,0) to (0,1) in a tiny graph.
     """
-    planning_env = get_rail_subgraph(tiny_test_graph)
-    solver = solver_cls(planning_env)
-
-    a0 = MockAgent(0, (0, 0), 0, (0, 1))
+    a0 = MockAgent(0, (0, 0), (0, 1))
     agents = [a0]
 
+    # Get the rail subgraph from your test graph.
+    planning_env = get_rail_subgraph(tiny_test_graph)
+    # Add proxy nodes for the agents.
+    solver_graph = add_proxy_nodes(planning_env, agents)
+    # Create the solver using the graph with proxies.
+    solver = solver_cls(solver_graph)
+    # Now solve without the no_proxies flag.
     solution_dict = solver.solve(agents)
+    # Filter proxy nodes
+    filtered_solution = filter_proxy_nodes(solution_dict)
 
-    path = solution_dict[a0.handle]
+    print(solution_dict)
+    print(filtered_solution)
+
+    path = filtered_solution[a0.handle]
     assert len(path) > 0, "Path should not be empty"
     last_node, last_time = path[-1]
     assert (last_node[0], last_node[1]) == (0, 1), "Wrong final cell"
@@ -31,17 +45,23 @@ def test_two_agents_cross(two_by_two_cross_graph, solver_cls):
     """
     A 2x2 cross scenario ensuring one agent must wait or otherwise avoid collision.
     """
-    planning_env = get_rail_subgraph(two_by_two_cross_graph)
-    solver = solver_cls(planning_env)
-
-    a0 = MockAgent(0, (0, 0), 0, (1, 1))
-    a1 = MockAgent(1, (1, 0), 0, (0, 1))
+    a0 = MockAgent(0, (0, 0), (1, 1))
+    a1 = MockAgent(1, (1, 0), (0, 1))
     agents = [a0, a1]
 
+    # Get the rail subgraph from your test graph.
+    planning_env = get_rail_subgraph(two_by_two_cross_graph)
+    # Add proxy nodes for the agents.
+    solver_graph = add_proxy_nodes(planning_env, agents)
+    # Create the solver using the graph with proxies.
+    solver = solver_cls(solver_graph)
+    # Now solve without the no_proxies flag.
     solution_dict = solver.solve(agents)
+    # Filter proxy nodes
+    filtered_solution = filter_proxy_nodes(solution_dict)
 
-    pathA = solution_dict[0]
-    pathB = solution_dict[1]
+    pathA = filtered_solution[0]
+    pathB = filtered_solution[1]
 
     assert len(pathA) > 0, "Agent A's path shouldn't be empty"
     assert len(pathB) > 0, "Agent B's path shouldn't be empty"
@@ -64,19 +84,23 @@ def test_passing_node_scenario(passing_node_graph, solver_cls, stay_at_goal=Fals
     There's a top node at (1,3,0) that can let them pass.
     If they don't vanish at goal, PP should fail, CBS succeed.
     """
-
-    G_rail = get_rail_subgraph(passing_node_graph)
-    solver = solver_cls(G_rail)
-
-    a0 = MockAgent(0, (2, 1), 0, (2, 4))
-    a1 = MockAgent(1, (2, 5), 0, (2, 2))
+    a0 = MockAgent(0, (2, 1), (2, 4))
+    a1 = MockAgent(1, (2, 5), (2, 2))
     agents = [a0, a1]
+
+    # Get the rail subgraph from your test graph.
+    planning_env = get_rail_subgraph(passing_node_graph)
+    # Add proxy nodes for the agents.
+    solver_graph = add_proxy_nodes(planning_env, agents)
+    # Create the solver using the graph with proxies.
+    solver = solver_cls(solver_graph)
 
     # Attempt to plan
     try:
-        solution = solver.solve(
-            agents
-        )  # or .schedule_agents_in_order(agents) if PP uses that
+        # Now solve without the no_proxies flag.
+        solution_dict = solver.solve(agents)
+        # Filter proxy nodes
+        filtered_solution = filter_proxy_nodes(solution_dict)
     except ValueError as e:
         # If no solution found, we can check if it's the PP solver that fails
         if (solver_cls is PrioritizedPlanningSolver) and stay_at_goal:
@@ -92,48 +116,61 @@ def test_passing_node_scenario(passing_node_graph, solver_cls, stay_at_goal=Fals
             "PP found a solution, but was expected to fail if goals remain blocked."
         )
 
-    pathA = solution[0]
-    pathB = solution[1]
+    pathA = filtered_solution[0]
+    pathB = filtered_solution[1]
     assert len(pathA) > 0, "Agent 0 path is empty?"
     assert len(pathB) > 0, "Agent 1 path is empty?"
 
     # Check final node is correct
-    assert (pathA[-1][0].row, pathA[-1][0].col) == (2, 4), "Agent0 didn't end at (2,4)"
-    assert (pathB[-1][0].row, pathB[-1][0].col) == (2, 2), "Agent1 didn't end at (2,2)"
+    assert (get_row(pathA[-1][0]), get_col(pathA[-1][0])) == (
+        2,
+        4,
+    ), "Agent0 didn't end at (2,4)"
+    assert (get_row(pathB[-1][0]), get_col(pathB[-1][0])) == (
+        2,
+        2,
+    ), "Agent1 didn't end at (2,2)"
 
     print("CBS succeeded with a detour. Great!")
 
 
 @pytest.mark.parametrize("solver_cls", [PrioritizedPlanningSolver, CBSSolver])
 def test_two_trains_suboptimal_scenario(two_trains_suboptimal_graph, solver_cls):
-    a0 = MockAgent(0, (4, 2), 0, (0, 1))
-    a1 = MockAgent(1, (1, 0), 0, (4, 1))
+    a0 = MockAgent(0, (4, 2), (0, 1))
+    a1 = MockAgent(1, (1, 0), (4, 1))
     agents = [a0, a1]
 
-    rail_subgraph = get_rail_subgraph(two_trains_suboptimal_graph)
-    solver = solver_cls(rail_subgraph)
+    # Get the rail subgraph from your test graph.
+    planning_env = get_rail_subgraph(two_trains_suboptimal_graph)
+    # Add proxy nodes for the agents.
+    solver_graph = add_proxy_nodes(planning_env, agents)
+    # Create the solver using the graph with proxies.
+    solver = solver_cls(solver_graph)
 
     try:
-        solution = solver.solve(agents)
+        # Now solve without the no_proxies flag.
+        solution_dict = solver.solve(agents)
+        # Filter proxy nodes
+        filtered_solution = filter_proxy_nodes(solution_dict)
     except ValueError as e:
         pytest.fail(f"{solver_cls.__name__} raised ValueError: {e}")
 
     # Basic solution presence checks
-    assert 0 in solution, "No path returned for agent 0"
-    assert 1 in solution, "No path returned for agent 1"
-    path0 = solution[0]
-    path1 = solution[1]
+    assert 0 in filtered_solution, "No path returned for agent 0"
+    assert 1 in filtered_solution, "No path returned for agent 1"
+    path0 = filtered_solution[0]
+    path1 = filtered_solution[1]
     assert path0, "Agent0 path is empty"
     assert path1, "Agent1 path is empty"
 
     # Final node checks
     final0 = path0[-1][0]
     final1 = path1[-1][0]
-    assert (final0.row, final0.col) == (0, 1), f"Agent0 didn't end at {(0,1)}"
-    assert (final1.row, final1.col) == (4, 1), f"Agent1 didn't end at {(4,1)}"
+    assert (get_row(final0), get_col(final0)) == (0, 1), f"Agent0 didn't end at {(0,1)}"
+    assert (get_row(final1), get_col(final1)) == (4, 1), f"Agent1 didn't end at {(4,1)}"
 
-    path0_coords = [(n.row, n.col) for n, _ in path0]
-    path1_coords = [(n.row, n.col) for n, _ in path1]
+    path0_coords = [(get_row(n), get_col(n)) for n, _ in path0]
+    path1_coords = [(get_row(n), get_col(n)) for n, _ in path1]
     print(f"Agent0 path coords: {path0_coords}")
     print(f"Agent1 path coords: {path1_coords}")
 

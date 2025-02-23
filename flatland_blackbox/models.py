@@ -80,10 +80,17 @@ class DifferentiableSolver(torch.autograd.Function):
         plan_np = plan_tensor.detach().cpu().numpy()
         grad_output_np = grad_output.detach().cpu().numpy()
 
-        # w_perturbed = w + lambda * dL/d(plan)
+        # Perturb the weights.
         w_perturbed = np.maximum(w_np + lambda_val * grad_output_np, 0)
+
+        # Debug prints: print original and perturbed weights.
+        # print("DEBUG: Original weights:", w_np)
+        # print("DEBUG: grad_output_np:", grad_output_np)
+        # print("DEBUG: Perturbed weights:", w_perturbed)
+
         plan_perturbed_np = solver_fn(w_perturbed)
-        # finite diff
+
+        # Compute finite difference gradient.
         gradient_np = -(plan_np - plan_perturbed_np) / lambda_val
         grad_w = torch.from_numpy(gradient_np).to(w_tensor.device).float()
 

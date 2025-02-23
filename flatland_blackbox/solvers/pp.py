@@ -1,10 +1,13 @@
 from heapq import heappop, heappush
 from math import inf
 
-from flatland_blackbox.solvers.errors import NoSolutionError
-from flatland_blackbox.utils.graph_utils import (
-    RailNode,
-    decide_node,
+from flatland_blackbox.utils import (
+    NoSolutionError,
+    get_col,
+    get_goal_proxy_node,
+    get_row,
+    get_start_proxy_node,
+    normalize_node,
     true_distance_heuristic,
 )
 
@@ -24,9 +27,7 @@ class ReservationManager:
         Once we finalize a path for agent_id, mark occupant=agent_id at each step.
         """
         for node, t in path:
-            # if node.direction == -1: # Skip proxy nodes
-            #     continue
-            r, c = node.row, node.col
+            r, c = get_row(node), get_col(node)
             self.occupant_table[((r, c), t)] = agent_id
 
     def is_blocked(self, agent_id, pre_r, pre_c, r, c, t):
@@ -79,16 +80,20 @@ class PrioritizedPlanningSolver:
         for agent in agents:
             row_s, col_s = agent.initial_position
             row_g, col_g = agent.target
+            start_node = get_start_proxy_node(
+                self.nx_graph, row_s, col_s, agent.handle
+            )  # (row, col, -1, agent_id)
+            goal_node = get_goal_proxy_node(
+                self.nx_graph, row_g, col_g
+            )  # (end_r, end_c, -1)
 
-            start_tuple = decide_node(self.nx_graph, row_s, col_s, agent.handle)
-            goal_tuple = decide_node(self.nx_graph, row_g, col_g, agent.handle)
-
-            dist_map = true_distance_heuristic(self.nx_graph, goal_tuple)
+            # If "learned_l" exists uses it over original weights "l"
+            dist_map = true_distance_heuristic(self.nx_graph, goal_node)
             assert None not in dist_map.values(), "Found None in distance map"
 
             self.agent_data[agent.handle] = {
-                "start_node": RailNode(*start_tuple),
-                "goal_node": RailNode(*goal_tuple),
+                "start_node": start_node,
+                "goal_node": goal_node,
                 "dist_map": dist_map,
                 "earliest_departure": getattr(agent, "earliest_departure", 0),
             }
@@ -102,15 +107,6 @@ class PrioritizedPlanningSolver:
             # Block path
             self.res_manager.block_path(agent.handle, path)
             solution[agent.handle] = path
-            #############
-            # coords = [((int(n.row), int(n.col)), t) for n, t in path]
-            # first_timestep = coords[0][1]
-            # final_timestep = coords[-1][1]
-            # path_duration = final_timestep - first_timestep
-            # print(f"Agent {agent.handle}: duration={path_duration} ({first_timestep}->{final_timestep}), coords={coords}")
-            #############
-
-        print(self.res_manager.occupant_table)
 
         return solution
 
@@ -128,36 +124,31 @@ class PrioritizedPlanningSolver:
     def _cooperative_a_star(
         self, agent_id, start_node, goal_node, dist_map, earliest_departure
     ):
-        """
-        Time-augmented A* with earliest_departure.
-        occupant_time increments by 'l', expansions priority uses 'learned_l'.
-        """
         open_list = []
         visited = {}
 
-        # Compute heuristic for start.
         start_occ_t = int(earliest_departure)
-        s_key = (start_node.row, start_node.col, start_node.direction)
+        s_key = normalize_node(start_node)
         h_val = dist_map.get(s_key, inf)
         start_g = 0.0
         start_f = start_g + h_val
 
-        # push => (f_val, g_val, occupant_time, node, parent)
         heappush(open_list, (start_f, start_g, start_occ_t, start_node, None))
 
         while open_list:
             f_val, g_val, occ_t, node, parent = heappop(open_list)
 
-            # Check goal
-            if (node.row, node.col) == (goal_node.row, goal_node.col):
+            # Check goal: compare row and col only.
+            if (get_row(node), get_col(node)) == (
+                get_row(goal_node),
+                get_col(goal_node),
+            ):
                 return self._reconstruct_path((node, occ_t, parent))
 
-            # Check visited
             if (node, occ_t) in visited and visited[(node, occ_t)] <= g_val:
                 continue
             visited[(node, occ_t)] = g_val
 
-            # Expand neighbors
             for succ_node, new_g, new_occ_time in self._get_successors(
                 agent_id, node, occ_t, g_val
             ):
@@ -165,7 +156,7 @@ class PrioritizedPlanningSolver:
                     (succ_node, new_occ_time)
                 ] <= new_g:
                     continue
-                s2_key = (succ_node.row, succ_node.col, succ_node.direction)
+                s2_key = normalize_node(succ_node)
                 succ_h = dist_map.get(s2_key, inf)
                 f_val_succ = new_g + succ_h
                 heappush(
@@ -176,37 +167,29 @@ class PrioritizedPlanningSolver:
         return None
 
     def _get_successors(self, agent_id, node, occ_t, g_val):
-        """
-        occupant_time is incremented by 'l'.
-        expansions priority uses g_val += 'learned_l'.
-        """
         successors = []
-        raw_node = (node.row, node.col, node.direction)
-        if raw_node in self.nx_graph:
-            for nbr in self.nx_graph.neighbors(raw_node):
-                edge_data = self.nx_graph.get_edge_data(raw_node, nbr)
-
-                orig_cost = edge_data.get("l", 1.0)  # occupant_time increments by this
-                learned_cost = float(
-                    edge_data.get("learned_l", orig_cost)
-                )  # use "l" as backup
-
-                # occupant_time => integer
+        # Use the full node as key.
+        if node in self.nx_graph:
+            for nbr in self.nx_graph.neighbors(node):
+                edge_data = self.nx_graph.get_edge_data(node, nbr)
+                orig_cost = edge_data.get("l", 1.0)
+                learned_cost = float(edge_data.get("learned_l", orig_cost))
                 arrival_time = int(occ_t + orig_cost)
                 new_g = g_val + learned_cost
-
-                nr, nc, nd = nbr
+                nr, nc, nd = normalize_node(
+                    nbr
+                )  # nbr might be 3 or 4 elements; we care about row, col, direction.
                 blocked = self.res_manager.is_blocked(
-                    agent_id, node.row, node.col, nr, nc, arrival_time
+                    agent_id, get_row(node), get_col(node), nr, nc, arrival_time
                 )
                 if not blocked:
-                    successors.append((RailNode(nr, nc, nd), new_g, arrival_time))
+                    successors.append((nbr, new_g, arrival_time))
 
-        # Wait in place => occupant_time + 1
+        # Wait action.
         wait_t = int(occ_t + 1)
         wait_learned = 1.0
         if not self.res_manager.is_blocked(
-            agent_id, node.row, node.col, node.row, node.col, wait_t
+            agent_id, get_row(node), get_col(node), get_row(node), get_col(node), wait_t
         ):
             successors.append((node, g_val + wait_learned, wait_t))
 
