@@ -110,12 +110,12 @@ def main():
     kwargs = vars(args)
 
     if args.mode == "experiments":
-        results = run_experiments(**kwargs)
-        write_results_to_csv(results, kwargs["output_csv"])
+        results = run_experiments(max_workers=8, **kwargs)
+        csv_file_name = kwargs["output_csv"]
+        write_results_to_csv(results, csv_file_name)
     elif args.mode == "solve":
         run_single_experiment(**kwargs)
     elif args.mode == "train":
-        # For training mode, force the solver type to 'trained'
         kwargs["solver"] = "trained"
         run_single_experiment(**kwargs)
     else:

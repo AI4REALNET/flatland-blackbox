@@ -8,14 +8,15 @@ from flatland_blackbox.utils import NoSolutionError, is_proxy_node
 
 
 def index_edges(G):
-    """Returns a sorted list of edges and a dictionary mapping each edge to its index.
+    """Returns a sorted list of edges and an index mapping for a given graph.
 
     Args:
         G (nx.Graph): The input graph.
 
     Returns:
-        tuple: A tuple (edgelist, edge_to_idx) where edgelist is a sorted list of edges,
-               and edge_to_idx is a dict mapping (u, v) tuples to an integer index.
+        tuple: A tuple (edgelist, edge_to_idx) where:
+            - edgelist (list): Sorted list of edges.
+            - edge_to_idx (dict): Dictionary mapping each edge (u, v) to its integer index.
     """
     edgelist = sorted(G.edges())
     edge_to_idx = {e: i for i, e in enumerate(edgelist)}
@@ -23,17 +24,17 @@ def index_edges(G):
 
 
 def plan_usage(plan_dict, edge_to_idx):
-    """Builds a usage array indicating the frequency of each edge in the plan.
+    """Computes an edge usage array from a plan.
 
-    The usage array has shape [num_edges], where each element is incremented by 1.0
-    every time the corresponding edge appears consecutively in any agent's path.
+    The usage array has length equal to the number of edges and each element is
+    incremented by 1.0 for each time an edge is used consecutively in any agent's path.
 
     Args:
         plan_dict (dict): Mapping from agent_id to a list of (node, time) tuples.
         edge_to_idx (dict): Mapping from (u, v) tuples to edge indices.
 
     Returns:
-        np.ndarray: An array of float values representing edge usage.
+        np.ndarray: A float array representing the frequency of usage for each edge.
     """
     E = max(edge_to_idx.values()) + 1
     usage = np.zeros(E, dtype=np.float32)
@@ -46,10 +47,19 @@ def plan_usage(plan_dict, edge_to_idx):
 
 
 def update_learned_costs(G, multipliers, edge_to_idx):
-    """
-    Returns a copy of G where for each edge (u, v) the 'learned_l' attribute is set as follows:
+    """Updates the graph's edge costs using learned multipliers.
+
+    For each edge (u, v) in the graph copy, the 'learned_l' attribute is set as follows:
       - If either endpoint is a proxy node, use the original cost ("l").
-      - Otherwise, set learned_l = original_cost * max(multipliers[idx], 0)
+      - Otherwise, set learned_l = original_cost * max(multipliers[idx], 0).
+
+    Args:
+        G (nx.Graph): The original graph.
+        multipliers (np.ndarray): Learned multipliers for each edge.
+        edge_to_idx (dict): Mapping from (u, v) tuples to edge indices.
+
+    Returns:
+        nx.Graph: A copy of G with updated 'learned_l' attributes on each edge.
     """
     H_new = G.copy()
     for u, v in H_new.edges():
@@ -64,18 +74,27 @@ def update_learned_costs(G, multipliers, edge_to_idx):
 
 
 def pp_solver_fn(w_np, base_graph, edge_to_idx, agents):
-    """
-    Helper function used during training to compute the PP plan usage.
-    It applies learned multipliers to update the graph's 'learned_l' values,
-    then runs the PP solver and returns the usage array computed from the resulting plan.
-    If no valid path is found, it returns a zero usage vector.
+    """Computes the PP plan usage using updated learned weights.
+
+    This function updates the graph's edge costs (setting 'learned_l') according to
+    the provided multipliers, runs the PP solver on the updated graph, and returns an
+    edge usage array derived from the computed plan. If no valid plan is found, a zero
+    usage vector is returned.
+
+    Args:
+        w_np (np.ndarray): Current learned multipliers as a NumPy array.
+        base_graph (nx.Graph): The base graph (with original edge costs in 'l').
+        edge_to_idx (dict): Mapping from (u, v) tuples to edge indices.
+        agents (list): List of agent objects.
+
+    Returns:
+        np.ndarray: Edge usage array computed from the PP plan.
     """
     H = update_learned_costs(base_graph, w_np, edge_to_idx)
     try:
         plan = PrioritizedPlanningSolver(H).solve(agents)
     except NoSolutionError as e:
-        print("  No solution found with current weights; returning zero usage vector")
-        # Return a zero usage vector (length = number of edges)
+        # print("  No solution found with current weights; returning zero usage vector")
         E = max(edge_to_idx.values()) + 1
         return np.zeros(E, dtype=np.float32)
     return plan_usage(plan, edge_to_idx)
@@ -84,27 +103,30 @@ def pp_solver_fn(w_np, base_graph, edge_to_idx, agents):
 def train_and_apply_weights(
     solver_graph, agents, cbs_plan, iters=100, lr=0.01, lam=3.0
 ):
-    """Trains edge multipliers to mimic the CBS edge usage and applies them to obtain an updated PP plan.
+    """Trains edge multipliers to mimic CBS edge usage and computes an updated PP plan.
+
+    This function uses a differentiable solver to train edge weight multipliers so that the PP plan
+    usage matches that of the CBS reference plan. After training, it applies the best learned multipliers
+    to update the graph and computes the final PP plan.
 
     Args:
         solver_graph (nx.Graph): The original graph.
         agents (list): List of agent objects.
         cbs_plan (dict): The cost=1 CBS plan (reference).
-        iters (int): Number of training iterations.
-        lr (float): Learning rate for Adam optimizer.
-        lam (float): Lambda parameter for the differentiable solver.
+        iters (int, optional): Number of training iterations. Defaults to 100.
+        lr (float, optional): Learning rate for the Adam optimizer. Defaults to 0.01.
+        lam (float, optional): Lambda parameter for finite differences in the differentiable solver. Defaults to 3.0.
 
     Returns:
-        tuple: (solver_graph_updated, pp_plan_trained) where:
-          - solver_graph_updated is the graph updated with the best learned multipliers.
-          - pp_plan_trained is the PP plan computed on that updated graph.
+        tuple: A tuple (solver_graph_updated, pp_plan_trained) where:
+            - solver_graph_updated (nx.Graph): The graph updated with the best learned multipliers.
+            - pp_plan_trained (dict): The PP plan computed on the updated graph.
     """
-    # Get the edge index mapping.
+    # Compute edge index mapping and expert plan usage.
     _, edge_to_idx = index_edges(solver_graph)
-    # Compute the expert plan usage from the CBS plan.
     cbs_usage = plan_usage(cbs_plan, edge_to_idx)
 
-    # Prepare training: re-index edges and initialize the weight parameter.
+    # Prepare training by re-indexing edges and initializing the weight parameter.
     edgelist, edge_to_idx = index_edges(solver_graph)
     model = EdgeWeightParam(len(edgelist))
     opt = optim.Adam(model.parameters(), lr=lr)
@@ -117,8 +139,6 @@ def train_and_apply_weights(
     best_loss = float("inf")
     best_w = None
 
-    print("Running training...")
-
     for step in range(iters):
         opt.zero_grad()
         w = model()
@@ -126,14 +146,12 @@ def train_and_apply_weights(
         loss = torch.sum(torch.abs(plan_usage_arr - expert_t))
         loss.backward()
         opt.step()
-        if step % 20 == 0:
-            print(f"  Train step={step}, loss={loss.item():.3f}")
         current_loss = loss.item()
         if current_loss < best_loss:
             best_loss = current_loss
             best_w = model().detach().cpu().numpy().copy()
 
-    # Update the solver graph using the best learned multipliers.
+    # Update the graph using the best learned multipliers and compute the final PP plan.
     solver_graph_updated = update_learned_costs(solver_graph, best_w, edge_to_idx)
     pp_plan_trained = PrioritizedPlanningSolver(solver_graph_updated).solve(agents)
 

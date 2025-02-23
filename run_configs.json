@@ -1,5 +1,5 @@
 {
-  "iters": 200,
+  "iters": 300,
   "lr": 0.01,
   "lam": 3.0,
   "num_seeds": 50,

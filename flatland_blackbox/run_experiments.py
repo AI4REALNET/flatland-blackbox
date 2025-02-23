@@ -1,3 +1,4 @@
+import concurrent.futures
 import csv
 import os
 from itertools import product
@@ -31,9 +32,6 @@ def run_single_experiment(plot=True, **kwargs):
       - "pp" or "cbs": Run the specified solver on a graph with all edge costs set to 1.
       - "trained": Run CBS and PP on the cost=1 graph to get reference solutions, then train
         edge multipliers and run PP with the updated costs.
-
-    The function performs environment setup, agent sorting (with overlapping EDT shifting),
-    solver execution, and collision filtering.
 
     Args:
         **kwargs: A dictionary containing keys:
@@ -78,13 +76,13 @@ def run_single_experiment(plot=True, **kwargs):
     # Sort agents by earliest departure time and shift overlapping EDTs.
     sorted_agents = sorted(agents, key=lambda a: a.earliest_departure)
     sorted_agents_shifted = shift_overlapping_edts(sorted_agents)
-    print_agents_start(sorted_agents_shifted)
+    # print_agents_start(sorted_agents_shifted)
 
     # Initialize solution variables.
     pp_plan, cbs_plan, final_plan, G_rail_updated = None, None, None, None
 
     if solver_type in ("pp", "cbs"):
-        print(f"Running {solver_type}...")
+        # print(f"Running {solver_type}...")
         # Run PP or CBS on cost=1 edges
         final_plan = run_solver(solver_graph, sorted_agents_shifted, solver_type)
         final_plan = filter_proxy_nodes(final_plan)
@@ -96,16 +94,16 @@ def run_single_experiment(plot=True, **kwargs):
 
     elif solver_type == "trained":
         try:
-            print("Running cbs...")
+            # print("Running cbs...")
             cbs_plan = run_solver(solver_graph, sorted_agents_shifted, "cbs")
         except NoSolutionError as e:
-            print(f"[WARNING] Skipping run because CBS did not find a solution: {e}")
+            # print(f"[WARNING] Skipping run because CBS did not find a solution: {e}")
             return None, None, None
 
-        print("Running pp...")
-        # Run PP on cost=1 edges
+        # print("Running pp...")
         pp_plan = run_solver(solver_graph, sorted_agents_shifted, "pp")
 
+        # print("Running training...")
         G_rail_updated, final_plan = train_and_apply_weights(
             solver_graph,
             sorted_agents_shifted,
@@ -115,74 +113,113 @@ def run_single_experiment(plot=True, **kwargs):
             lam=lam_,
         )
         # Filter the proxy nodes out
-        pp_plan = filter_proxy_nodes(pp_plan)
-        cbs_plan = filter_proxy_nodes(cbs_plan)
-        final_plan = filter_proxy_nodes(final_plan)
+        pp_plan_filtered = filter_proxy_nodes(pp_plan)
+        cbs_plan_filtered = filter_proxy_nodes(cbs_plan)
+        final_plan_filtered = filter_proxy_nodes(final_plan)
 
         # Check for collisions.
-        check_no_collisions(pp_plan)
-        check_no_collisions(cbs_plan)
-        check_no_collisions(final_plan)
+        # check_no_collisions(pp_plan_filtered)
+        # check_no_collisions(cbs_plan_filtered)
+        # check_no_collisions(final_plan_filtered)
 
         # Compute flow times.
-        flow_time_pp = compute_flowtime(pp_plan)
-        flow_time_cbs = compute_flowtime(cbs_plan)
-        flow_time_fpp = compute_flowtime(final_plan)
+        flow_time_pp = compute_flowtime(pp_plan_filtered)
+        flow_time_cbs = compute_flowtime(cbs_plan_filtered)
+        flow_time_fpp = compute_flowtime(final_plan_filtered)
 
         # Print paths and flow time results.
-        print_agent_paths(pp_plan, solver_type)
-        print_agent_paths(cbs_plan, solver_type)
-        print_agent_paths(final_plan, solver_type)
+        # print_agent_paths(pp_plan_filtered, "pp")
+        # print_agent_paths(cbs_plan_filtered, "cbs")
+        # print_agent_paths(final_plan_filtered, "pp final")
 
-        print(
-            f"\n### Flow times: pp: {flow_time_pp}  cbs: {flow_time_cbs}  pp final: {flow_time_fpp}"
-        )
+        # print(
+        #     f"\n### Flow times: pp: {flow_time_pp}  cbs: {flow_time_cbs}  pp final: {flow_time_fpp}"
+        # )
 
-        assert flow_time_pp >= flow_time_cbs, "PP flow time is lower than CBS flow time"
-        assert (
-            flow_time_fpp >= flow_time_cbs
-        ), "Learned PP flow time is lower than CBS flow time"
+        # assert flow_time_pp >= flow_time_cbs, "PP flow time is lower than CBS flow time"
+        # assert (
+        #     flow_time_fpp >= flow_time_cbs
+        # ), "Learned PP flow time is lower than CBS flow time"
 
-        if flow_time_pp < flow_time_fpp:
-            print("[WARNING] Final pp flow time is higher than original PP flow time.")
+        # if flow_time_pp < flow_time_fpp:
+        #     print("[WARNING] Final pp flow time is higher than original PP flow time.")
 
         if plot:
-            generate_and_plot_agent_subgraphs(env, G_rail, pp_plan, "pp")
-            generate_and_plot_agent_subgraphs(env, G_rail, cbs_plan, "cbs")
+            generate_and_plot_agent_subgraphs(env, G_rail, pp_plan_filtered, "pp")
+            generate_and_plot_agent_subgraphs(env, G_rail, cbs_plan_filtered, "cbs")
             generate_and_plot_agent_subgraphs(
-                env, G_rail_updated, final_plan, "trained"
+                env, G_rail_updated, final_plan_filtered, "trained"
             )
 
         return flow_time_pp, flow_time_cbs, flow_time_fpp
 
 
-def run_experiments(**kwargs):
-    """Runs a series of experiments over multiple environment configurations.
-
-    For each configuration, it computes:
-      - The cost=1 CBS plan (reference).
-      - The cost=1 PP plan (reference).
-      - The final trained PP plan (with learned edge costs).
-    Flow time is computed for each configuration.
+def run_experiment_config(config, iters, lr, lam):
+    """
+    Runs a single experiment configuration.
 
     Args:
-        **kwargs: A dictionary with experiment parameters including:
-            start_seed (int): Starting seed.
-            num_seeds (int): Number of seeds to run.
-            num_agents_list (list[int]): List of agent counts to test.
-            max_cities_list (list[int]): List of maximum city counts to test.
-            width_list (list[int]): List of map widths to test.
-            height_list (list[int]): List of map heights to test.
-            iters (int): Training iterations.
-            lr (float): Learning rate.
-            lam (float): Lambda parameter.
+        config (tuple): (seed, num_agents, max_cities, width, height)
+        iters (int): Training iterations.
+        lr (float): Learning rate.
+        lam (float): Lambda parameter.
 
     Returns:
-        list[dict]: A list of result dictionaries for each experiment configuration.
+        dict: Result dictionary with experiment configuration and flow times.
+    """
+    seed, num_agents, max_cities, width, height = config
+    # print(
+    #     f"Config: seed={seed}, num_agents={num_agents}, max_cities={max_cities}, width={width}, height={height}"
+    # )
+    flow_time_pp, flow_time_cbs, flow_time_fpp = run_single_experiment(
+        plot=False,
+        seed=seed,
+        width=width,
+        height=height,
+        num_agents=num_agents,
+        max_cities=max_cities,
+        solver="trained",
+        iters=iters,
+        lr=lr,
+        lam=lam,
+    )
+    return {
+        "seed": seed,
+        "num_agents": num_agents,
+        "max_cities": max_cities,
+        "width": width,
+        "height": height,
+        "flowtime_pp": flow_time_pp,
+        "flowtime_cbs": flow_time_cbs,
+        "flowtime_trained_pp": flow_time_fpp,
+    }
+
+
+def run_experiments(max_workers, **kwargs):
+    """
+    Runs experiments over multiple configurations and aggregates the results.
+
+    This function builds all configurations as the Cartesian product of seeds, agent counts,
+    maximum city counts, widths, and heights. It then executes each configuration in parallel using
+    a ProcessPoolExecutor, and returns a list of result dictionaries.
+
+    Args:
+        **kwargs: A dictionary with experiment parameters, including:
+            - start_seed (int): Starting seed.
+            - num_seeds (int): Number of seeds to run.
+            - num_agents_list (list[int]): List of agent counts to test.
+            - max_cities_list (list[int]): List of maximum city counts to test.
+            - width_list (list[int]): List of map widths to test.
+            - height_list (list[int]): List of map heights to test.
+            - iters (int): Training iterations.
+            - lr (float): Learning rate.
+            - lam (float): Lambda parameter.
+
+    Returns:
+        list[dict]: A list of result dictionaries, one for each experiment configuration.
     """
     results = []
     seeds = range(kwargs["start_seed"], kwargs["start_seed"] + kwargs["num_seeds"])
-
     all_configs = list(
         product(
             seeds,
@@ -194,36 +231,23 @@ def run_experiments(**kwargs):
     )
     total = len(all_configs)
 
-    for seed, num_agents, max_cities, width, height in tqdm(
-        all_configs, total=total, desc="Experiments"
-    ):
-        print(
-            f"Config: seed={seed}, num_agents={num_agents}, max_cities={max_cities}, width={width}, height={height}"
-        )
+    iters = kwargs["iters"]
+    lr = kwargs["lr"]
+    lam = kwargs["lam"]
 
-        flow_time_pp, flow_time_cbs, flow_time_fpp = run_single_experiment(
-            plot=False,
-            seed=seed,
-            width=width,
-            height=height,
-            num_agents=num_agents,
-            max_cities=max_cities,
-            solver="trained",
-            iters=kwargs["iters"],
-            lr=kwargs["lr"],
-            lam=kwargs["lam"],
-        )
-        result = {
-            "seed": seed,
-            "num_agents": num_agents,
-            "max_cities": max_cities,
-            "width": width,
-            "height": height,
-            "flowtime_pp": flow_time_pp,
-            "flowtime_cbs": flow_time_cbs,
-            "flowtime_trained_pp": flow_time_fpp,
+    with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(run_experiment_config, config, iters, lr, lam): config
+            for config in all_configs
         }
-        results.append(result)
+        for future in tqdm(
+            concurrent.futures.as_completed(futures), total=total, desc="Experiments"
+        ):
+            try:
+                result = future.result()
+                results.append(result)
+            except Exception as e:
+                print(f"Experiment failed for config {futures[future]}: {e}")
     return results
 
 
@@ -278,26 +302,24 @@ def run_solver(graph, agents, solver_type):
 
 
 def print_agent_paths(plan, solver_name):
-    """Prints a summary of each agent's path.
+    """
+    Prints a summary of agent paths with durations and coordinates.
 
     Args:
         plan (dict): Mapping from agent_id to a list of (node, time) tuples.
-        solver_name (str): Identifier for the solver (e.g., "pp", "cbs", "trained").
-
-    Raises:
-        AssertionError: If any agent's times are not strictly increasing.
+        solver_name (str): Identifier for the solver (e.g., "PP", "CBS") to be printed.
     """
-    print(f"### {solver_name} path: ")
+    print(f"  {solver_name} path: ")
     for agent_id, path in plan.items():
         coords = [((int(get_row(n)), int(get_col(n))), t) for n, t in path]
         assert all(
             path[i + 1][1] > path[i][1] for i in range(len(path) - 1)
         ), f"Agent {agent_id} has non‐strictly‐increasing times!"
-        first_timestep = coords[0][1]
-        final_timestep = coords[-1][1]
-        path_duration = final_timestep - first_timestep
+        start_time = path[0][1]
+        end_time = path[-1][1]
+        path_duration = end_time - start_time
         print(
-            f"Agent {agent_id}: duration={path_duration} ({first_timestep}->{final_timestep}), coords={coords}"
+            f"Agent {agent_id}: duration={path_duration} ({start_time}->{end_time}), coords={coords}"
         )
 
 

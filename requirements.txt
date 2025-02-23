@@ -1,7 +1,8 @@
+flatland-rl==4.0.3
 networkx
 pytest
 pytorch
 torchvision
 scipy
 tqdm
-flatland-rl==4.0.3
+pandas
