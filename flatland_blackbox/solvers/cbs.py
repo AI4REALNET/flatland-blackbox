@@ -5,10 +5,10 @@ from math import inf
 from flatland_blackbox.utils import (
     NoSolutionError,
     get_col,
-    get_direction,
     get_goal_proxy_node,
     get_row,
     get_start_proxy_node,
+    is_proxy_node,
     normalize_node,
     true_distance_heuristic,
 )
@@ -86,7 +86,7 @@ class CBSSolver:
         )  # {agent_id: {"start_node", "goal_node", "dist_map", "earliest_departure"}}
         self.plan_cache = {}  # key: (agent_id, constraints_key) -> path
 
-    def solve(self, agents, max_high_level_expansions=10_000):
+    def solve(self, agents, max_high_level_expansions=30_000):
         """
         Returns dict: agent_id -> [(node, time), ...]
         """
@@ -124,6 +124,11 @@ class CBSSolver:
         expansions_count = 0
         while self.open_list:
             expansions_count += 1
+            if expansions_count % 1000 == 0:
+                print(
+                    f"  CBS High-level expansions: {expansions_count}, open list size: {len(self.open_list)}"
+                )
+
             if expansions_count > max_high_level_expansions:
                 raise NoSolutionError(
                     f"CBS high-level search exceeded expansion limit ({max_high_level_expansions})."
@@ -136,7 +141,7 @@ class CBSSolver:
                 # print(f"Solution found after {expansions_count} expansions")
                 return current.solution
 
-            print("Conflict detected:", conflict)
+            # print("Conflict detected:", conflict)
             for agent_id, constraint_info in self.generate_constraints(conflict):
                 # print(f"    Adding constraint for agent {agent_id}: {constraint_info}")
                 child_node = deepcopy(current)
@@ -209,7 +214,6 @@ class CBSSolver:
                 for nbr in self.nx_graph.neighbors(node):
                     cost = self.nx_graph.get_edge_data(node, nbr).get("l", 1)
                     arrival = int(t + cost)
-                    # nbr is used directly (no RailNode wrapper).
                     # Check vertex and edge constraints.
                     if constraints.is_vertex_constrained(
                         arrival, (get_row(nbr), get_col(nbr))
@@ -230,20 +234,52 @@ class CBSSolver:
                             open_list, (new_f, new_g, nbr, arrival, (node, t, parent))
                         )
 
+            # # Expand wait action.
+            # wait_t = int(t + 1)
+            # if not constraints.is_vertex_constrained(
+            #     wait_t, (get_row(node), get_col(node))
+            # ):
+            #     new_g = g_val + 1
+            #     s2_key = normalize_node(node)
+            #     h_val = dist_dict.get(s2_key, inf)
+            #     if h_val != inf:
+            #         new_f = new_g + h_val
+            #         if (node, wait_t) not in visited or visited[(node, wait_t)] > new_g:
+            #             heappush(
+            #                 open_list, (new_f, new_g, node, wait_t, (node, t, parent))
+            #             )
+
             # Expand wait action.
             wait_t = int(t + 1)
-            if not constraints.is_vertex_constrained(
-                wait_t, (get_row(node), get_col(node))
+            wait_cost = (
+                1.0  # or 0 if you want waiting in the proxy to not add cost at all
+            )
+            if (
+                is_proxy_node(node)
+                and self.nx_graph.nodes[node].get("agent_id", None) == agent_id
             ):
-                new_g = g_val + 1
+                # Agent is in its own start proxy: allow waiting unconditionally.
+                new_g = g_val + wait_cost  # or g_val if no penalty for waiting.
                 s2_key = normalize_node(node)
                 h_val = dist_dict.get(s2_key, inf)
                 if h_val != inf:
                     new_f = new_g + h_val
-                    if (node, wait_t) not in visited or visited[(node, wait_t)] > new_g:
+                    heappush(open_list, (new_f, new_g, node, wait_t, (node, t, parent)))
+            else:
+                # Normal behavior: check constraints.
+                if not constraints.is_vertex_constrained(
+                    wait_t, (get_row(node), get_col(node))
+                ):
+                    new_g = g_val + wait_cost
+                    s2_key = normalize_node(node)
+                    h_val = dist_dict.get(s2_key, inf)
+                    if h_val != inf:
+                        new_f = new_g + h_val
                         heappush(
                             open_list, (new_f, new_g, node, wait_t, (node, t, parent))
                         )
+                # else:
+                #     print(f"Agent {agent_id}: Wait at {node} at time {wait_t} blocked.")
 
         self.plan_cache[(agent_id, constraints_key)] = None
         return None
@@ -271,9 +307,6 @@ class CBSSolver:
                 node = None
                 for n, t_val in path:
                     if int(t_val) == t:
-                        # if self._is_proxy(n):
-                        #     node = None
-                        #     break  # Skip this agent if in a proxy.
                         node = n
                         break
                 if node is None:
@@ -298,8 +331,6 @@ class CBSSolver:
                 if t2 > t1 and t1 >= edt:
                     if self.vanish_at_goal and t2 > int(path[-1][1]):
                         continue
-                    # if self._is_proxy(node1) or self._is_proxy(node2):
-                    #     continue
                     key = (
                         int(t1),
                         (get_row(node1), get_col(node1)),
@@ -364,7 +395,7 @@ class CBSSolver:
     def compute_solution_cost(self, solution):
         total = 0
         for path in solution.values():
-            filtered = [(n, t) for (n, t) in path if get_direction(n) != -1]
+            filtered = [(n, t) for (n, t) in path if not is_proxy_node(n)]
             if filtered:
                 total += filtered[-1][1] - filtered[0][1]
         return total
@@ -386,7 +417,3 @@ class CBSSolver:
             (ec.time, ec.loc1, ec.loc2) for ec in constraints.edge_constraints
         )
         return (vertex_key, edge_key)
-
-    def _is_proxy(self, node):
-        """Returns True if the node is a proxy node (direction == -1)."""
-        return get_direction(node) == -1

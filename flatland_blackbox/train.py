@@ -4,7 +4,7 @@ import torch.optim as optim
 
 from flatland_blackbox.models import DifferentiableSolver, EdgeWeightParam
 from flatland_blackbox.solvers.pp import PrioritizedPlanningSolver
-from flatland_blackbox.utils import is_proxy_node
+from flatland_blackbox.utils import NoSolutionError, is_proxy_node
 
 
 def index_edges(G):
@@ -66,11 +66,18 @@ def update_learned_costs(G, multipliers, edge_to_idx):
 def pp_solver_fn(w_np, base_graph, edge_to_idx, agents):
     """
     Helper function used during training to compute the PP plan usage.
-    It applies the learned multipliers to update the graph's 'learned_l' values,
+    It applies learned multipliers to update the graph's 'learned_l' values,
     then runs the PP solver and returns the usage array computed from the resulting plan.
+    If no valid path is found, it returns a zero usage vector.
     """
     H = update_learned_costs(base_graph, w_np, edge_to_idx)
-    plan = PrioritizedPlanningSolver(H).solve(agents)
+    try:
+        plan = PrioritizedPlanningSolver(H).solve(agents)
+    except NoSolutionError as e:
+        print("  No solution found with current weights; returning zero usage vector")
+        # Return a zero usage vector (length = number of edges)
+        E = max(edge_to_idx.values()) + 1
+        return np.zeros(E, dtype=np.float32)
     return plan_usage(plan, edge_to_idx)
 
 
@@ -119,7 +126,7 @@ def train_and_apply_weights(
         loss = torch.sum(torch.abs(plan_usage_arr - expert_t))
         loss.backward()
         opt.step()
-        if step % 10 == 0:
+        if step % 20 == 0:
             print(f"  Train step={step}, loss={loss.item():.3f}")
         current_loss = loss.item()
         if current_loss < best_loss:

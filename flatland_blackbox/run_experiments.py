@@ -313,13 +313,19 @@ def generate_and_plot_agent_subgraphs(env, G_rail, solution, solver_type):
     G_paths_subgraphs = {}
     for a_id, path in solution.items():
         only_nodes = [p[0] for p in path]
-        G_sub = nx.induced_subgraph(G_rail, only_nodes)
-        G_paths_subgraphs[a_id] = G_sub
+        try:
+            G_sub = nx.induced_subgraph(G_rail, only_nodes)
+            G_paths_subgraphs[a_id] = G_sub
+        except Exception as e:
+            print(f"Warning: Failed to create subgraph for agent {a_id}: {e}")
 
     print(f"Generating {solver_type} plots ...")
-    plot_agent_subgraphs(
-        env, G_paths_subgraphs, save_fig_folder=f"outputs/{solver_type}"
-    )
+    try:
+        plot_agent_subgraphs(
+            env, G_paths_subgraphs, save_fig_folder=f"outputs/{solver_type}"
+        )
+    except Exception as e:
+        print(f"Warning: Plotting failed for {solver_type} with error: {e}")
 
 
 def write_results_to_csv(results, filename):

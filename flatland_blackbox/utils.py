@@ -35,11 +35,6 @@ def normalize_node(node):
     return node[:3] if len(node) == 4 else node
 
 
-# def convert_node_to_np_ints(node):
-#     # Just for concistency
-#     return tuple(np.int64(x) for x in node)
-
-
 def is_proxy_node(node):
     """Return True if the node is a proxy node.
 

@@ -4,6 +4,7 @@ from math import inf
 from flatland_blackbox.utils import (
     NoSolutionError,
     get_col,
+    get_direction,
     get_goal_proxy_node,
     get_row,
     get_start_proxy_node,
@@ -168,7 +169,6 @@ class PrioritizedPlanningSolver:
 
     def _get_successors(self, agent_id, node, occ_t, g_val):
         successors = []
-        # Use the full node as key.
         if node in self.nx_graph:
             for nbr in self.nx_graph.neighbors(node):
                 edge_data = self.nx_graph.get_edge_data(node, nbr)
@@ -176,22 +176,36 @@ class PrioritizedPlanningSolver:
                 learned_cost = float(edge_data.get("learned_l", orig_cost))
                 arrival_time = int(occ_t + orig_cost)
                 new_g = g_val + learned_cost
-                nr, nc, nd = normalize_node(
-                    nbr
-                )  # nbr might be 3 or 4 elements; we care about row, col, direction.
+
+                nr, nc, nd = normalize_node(nbr)
                 blocked = self.res_manager.is_blocked(
                     agent_id, get_row(node), get_col(node), nr, nc, arrival_time
                 )
                 if not blocked:
                     successors.append((nbr, new_g, arrival_time))
-
+                # else:
+                #     print(f"Agent {agent_id}: Edge from {node} to {nbr} at time {arrival_time} blocked.")
         # Wait action.
         wait_t = int(occ_t + 1)
-        wait_learned = 1.0
-        if not self.res_manager.is_blocked(
-            agent_id, get_row(node), get_col(node), get_row(node), get_col(node), wait_t
+        wait_cost = 1.0
+        # If the current node is a start proxy, allow waiting unconditionally.
+        if (
+            get_direction(node) == -1
+            and self.nx_graph.nodes[node].get("agent_id", None) == agent_id
         ):
-            successors.append((node, g_val + wait_learned, wait_t))
+            successors.append((node, g_val + wait_cost, wait_t))
+        else:
+            if not self.res_manager.is_blocked(
+                agent_id,
+                get_row(node),
+                get_col(node),
+                get_row(node),
+                get_col(node),
+                wait_t,
+            ):
+                successors.append((node, g_val + wait_cost, wait_t))
+            # else:
+            #     print(f"Agent {agent_id}: Wait at {node} at time {wait_t} blocked.")
 
         return successors
 
