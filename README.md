@@ -1,13 +1,6 @@
 # Flatland Blackbox
 
-Flatland Blackbox is a multi-agent path planning framework for the Flatland train environment. The repository implements two solvers, Conflict-Based Search (CBS) and Prioritized Planning (PP) (with optional training via learned edge multipliers). It also provides scripts for running experiments over various environment configurations and for visualizing the results.
-
-## Features
-
-- **Multi-agent Path Planning:** Implements both optimal (CBS) and suboptimal (PP) solvers.
-- **Learnable Heuristics:** The PP solver can be trained using a differentiable framework to adjust edge costs.
-- **Experiments Framework:** Run experiments over multiple configurations (varying number of agents, map size, etc.) and save aggregated results.
-- **Visualization Tools:** Generate plots from experiment results.
+This repository implements two solvers, Conflict-Based Search (CBS) and Prioritized Planning (PP). The PP solver can be trained using a differentiable framework to adjust edge costs. It also provides scripts for running experiments over various environment configurations and for visualizing the results.
 
 ## Requirements
 
