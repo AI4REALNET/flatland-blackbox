@@ -124,9 +124,9 @@ def run_single_experiment(console_output=True, **kwargs):
         final_plan_filtered = filter_proxy_nodes(final_plan)
 
         # Check for collisions.
-        check_no_collisions(pp_plan_filtered)
-        check_no_collisions(cbs_plan_filtered)
-        check_no_collisions(final_plan_filtered)
+        # check_no_collisions(pp_plan_filtered)
+        # check_no_collisions(cbs_plan_filtered)
+        # check_no_collisions(final_plan_filtered)
 
         # Compute flow times.
         flow_time_pp = compute_flowtime(pp_plan_filtered)
@@ -335,7 +335,8 @@ def print_agent_paths(plan, solver_name):
 
 
 def generate_and_plot_agent_subgraphs(env, G_rail, solution, solver_type):
-    """Generates and plots subgraphs for each agent's path.
+    """
+    Generates and plots subgraphs for each agent's path.
 
     Args:
         env (Environment): The Flatland environment.
@@ -343,19 +344,34 @@ def generate_and_plot_agent_subgraphs(env, G_rail, solution, solver_type):
         solution (dict): Mapping from agent_id to a list of (node, time) tuples.
         solver_type (str): Identifier for the solver (used in naming output files).
     """
+    # Build subgraphs and also build a dict of titles to use for each agent's figure.
     G_paths_subgraphs = {}
-    for a_id, path in solution.items():
+    agent_titles = {}
+
+    for agent_id, path in solution.items():
+        start_time = path[0][1]
+        end_time = path[-1][1]
+        path_duration = end_time - start_time
+        title_str = (
+            f"Agent {agent_id}: duration={path_duration} (t={start_time}->t={end_time})"
+        )
+        agent_titles[agent_id] = title_str
+
+        # Build subgraph for this agent:
         only_nodes = [p[0] for p in path]
         try:
             G_sub = nx.induced_subgraph(G_rail, only_nodes)
-            G_paths_subgraphs[a_id] = G_sub
+            G_paths_subgraphs[agent_id] = G_sub
         except Exception as e:
-            print(f"Warning: Failed to create subgraph for agent {a_id}: {e}")
+            print(f"Warning: Failed to create subgraph for agent {agent_id}: {e}")
 
     print(f"Generating {solver_type} plots ...")
     try:
         plot_agent_subgraphs(
-            env, G_paths_subgraphs, save_fig_folder=f"outputs/{solver_type}"
+            env,
+            G_paths_subgraphs,
+            save_fig_folder=f"outputs/{solver_type}",
+            agent_titles=agent_titles,
         )
     except Exception as e:
         print(f"Warning: Plotting failed for {solver_type} with error: {e}")

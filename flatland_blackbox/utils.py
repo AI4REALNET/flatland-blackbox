@@ -319,52 +319,6 @@ def visualize_graph_weights(G, title, scale=True):
 
 def check_no_collisions(paths):
     """
-    Checks paths for collisions. Raises an AssertionError if:
-      - Two agents occupy the same cell at the same time (vertex collision).
-      - Two agents swap positions in one time step (edge-swap collision).
-
-    Args:
-        paths (dict): Mapping from agent_id to a list of (node, timestep) tuples.
-    """
-    seen_positions = {}
-    for agent_id, path in paths.items():
-        for node, t in path:
-            if is_proxy_node(node):
-                continue
-            pos_time = (get_row(node), get_col(node), t)
-            if pos_time in seen_positions:
-                other_agent = seen_positions[pos_time]
-                raise AssertionError(
-                    f"Collision detected! Agent {agent_id} and agent {other_agent} "
-                    f"both at row={get_row(node)}, col={get_col(node)} at time={t}"
-                )
-            seen_positions[pos_time] = agent_id
-
-    transitions = {}
-    for agent_id, path in paths.items():
-        for i in range(len(path) - 1):
-            (node1, t1) = path[i]
-            (node2, t2) = path[i + 1]
-            if t2 > t1:
-                move_key = (
-                    (get_row(node1), get_col(node1), t1),
-                    (get_row(node2), get_col(node2), t2),
-                )
-                reverse_key = (
-                    (get_row(node2), get_col(node2), t1),
-                    (get_row(node1), get_col(node1), t2),
-                )
-                if reverse_key in transitions:
-                    other_agent = transitions[reverse_key]
-                    raise AssertionError(
-                        f"Edge-swap collision detected! Agent {agent_id} and agent {other_agent} "
-                        f"swap positions: {move_key} <-> {reverse_key}"
-                    )
-                transitions[move_key] = agent_id
-
-
-def check_no_collisions(paths):
-    """
     Checks a set of agent paths for collisions.
 
     Args:
@@ -443,7 +397,7 @@ def initialize_environment(
     return env
 
 
-def plot_agent_subgraphs(env, G_paths_subgraphs, save_fig_folder):
+def plot_agent_subgraphs(env, G_paths_subgraphs, save_fig_folder, agent_titles):
     """
     Plots each agent's subgraph over the environment background image.
 
@@ -479,8 +433,8 @@ def plot_agent_subgraphs(env, G_paths_subgraphs, save_fig_folder):
             show_edge_weights=True,
             alpha_img=0.7,
         )
-        plt.title(f"Agent {agent_id} path")
-        plt.savefig(f"{save_fig_folder}/path_agent_{agent_id}.png", dpi="figure")
+        plt.title(agent_titles[agent_id])
+        plt.savefig(f"{save_fig_folder}/path_agent_{agent_id}.png", dpi=300)
         plt.close("all")
 
 
@@ -495,5 +449,5 @@ def print_agents_start(agents):
         start_rc = tuple(map(int, agent.initial_position))
         end_rc = tuple(map(int, agent.target))
         print(
-            f"Agent {agent.handle} start: {start_rc} end: {end_rc} edt: {agent.earliest_departure}"
+            f"Agent {agent.handle} start: {start_rc} end: {end_rc} earliest departure: {agent.earliest_departure}"
         )

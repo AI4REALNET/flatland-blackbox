@@ -30,7 +30,7 @@ class EdgeWeightParam(torch.nn.Module):
 class DifferentiableSolver(torch.autograd.Function):
     """A differentiable wrapper for a solver function.
 
-    This autograd function runs a solver in the forward pass and then uses a finite difference
+    Autograd function that runs a solver in the forward pass and then uses a finite difference
     approximation in the backward pass to compute gradients with respect to the solver output.
     """
 

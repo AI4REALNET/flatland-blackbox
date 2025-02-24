@@ -2,10 +2,12 @@
   "iters": 300,
   "lr": 0.01,
   "lam": 3.0,
-  "num_seeds": 50,
+  "num_seeds": 100,
   "start_seed": 0,
   "num_agents_list": [
-    7
+    3,
+    7,
+    11
   ],
   "max_cities_list": [
     2

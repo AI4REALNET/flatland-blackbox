@@ -64,3 +64,13 @@ When a single instance is run, the resulting paths can be vizualized under `/out
 ## Plotting Experiment Results
 
 After running experiments, the details of each run along with the aggregated results can be found inside `/outputs/experiment_results.csv` and `/outputs/aggregated_results.csv` respectively.
+
+## Reproducing results
+
+To reproduce the results captured in the `outputs/*.csv` files, run:
+
+```bash
+python main.py --mode experiments
+```
+
+With the given `run_configs.json` file.
