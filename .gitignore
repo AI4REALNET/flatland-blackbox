@@ -4,9 +4,6 @@ __pycache__/
 *$py.class
 .pytest_cache
 
-# Jupyter Notebook checkpoints
-.ipynb_checkpoints/
-
 # macOS system files
 .DS_Store
 ._*
@@ -18,24 +15,19 @@ dist/
 build/
 *.whl
 
-# Logs and temporary files
-*.log
-*.tmp
-
-# Notebooks
-/notebooks
-
 # Jupyter Notebook output
 *.nbconvert.ipynb
 
 # Notebook metadata
 *.metadata.json
 
-# Pyright
-pyrightconfig.json
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
 
-# Todos
-todos.txt
+# Logs and temporary files
+*.log
+*.tmp
 
-# Outputs
-# outputs/*
+mapf_benchmarks/
+
+results/
