@@ -13,6 +13,8 @@ from flatland_blackbox.utils import (
     true_distance_heuristic,
 )
 
+# Portions of this code were adapted and heavily modified from multi_agent_path_planning,
+# available at https://github.com/atb033/multi_agent_path_planning/.
 
 class Constraints:
     """Container for vertex and edge constraints used in CBS.
